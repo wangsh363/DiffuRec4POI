@@ -5,7 +5,8 @@ import numpy as np
 import math
 import torch
 import torch.nn.functional as F
-
+from utils import get_day_norm7, get_norm_time96
+from datetime import datetime
 
 def _extract_into_tensor(arr, timesteps, broadcast_shape):
     """
@@ -153,6 +154,159 @@ def space_timesteps(num_timesteps, section_counts):
     return set(all_steps)
 
 
+# def t2v(tau, f, out_features, w, b, w0, b0, arg=None):
+#     # tau是输入的时间，形状为 (batch_size, seq_len)
+#     # f是激活函数（torch.sin或者torch.cos）
+#     # out_features是输出向量的维度
+#     # w和b是用于线性变换的斜率和偏置。w0和b0也是
+
+#      # 确保所有张量是浮动类型
+#     tau = tau.float()
+#     w = w.float()
+#     b = b.float()
+#     w0 = w0.float()
+#     b0 = b0.float()
+
+#     if arg:  # 如果有arg，就把arg传给f
+#         v1 = f(torch.matmul(tau, w) + b, arg)  # v1是非线性部分
+#     else:
+#         v1 = f(torch.matmul(tau, w) + b)
+#     v2 = torch.matmul(tau, w0) + b0  # v2是线性部分
+#     return torch.cat([v1, v2], 1)  # cat函数用来拼接向量。表示把v1和v2沿最后一维拼接（gpt说沿列维度？）
+
+
+# class SineActivation(nn.Module):  # 使用正弦函数作为激活函数
+#     def __init__(self, in_features, out_features):
+#         super(SineActivation, self).__init__()
+#         self.out_features = out_features
+#         self.w0 = nn.parameter.Parameter(torch.randn(in_features, 1))
+#         self.b0 = nn.parameter.Parameter(torch.randn(in_features, 1))
+#         self.w = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))
+#         self.b = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))
+#         self.f = torch.sin
+
+#     def forward(self, tau):
+#         return t2v(tau, self.f, self.out_features, self.w, self.b, self.w0, self.b0)
+
+
+# class CosineActivation(nn.Module):  # 使用余弦函数作为激活函数
+#     def __init__(self, in_features, out_features):
+#         super(CosineActivation, self).__init__()
+#         self.out_features = out_features
+#         self.w0 = nn.parameter.Parameter(torch.randn(in_features, 1))
+#         self.b0 = nn.parameter.Parameter(torch.randn(in_features, 1))
+#         self.w = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))
+#         self.b = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))
+#         self.f = torch.cos
+
+#     def forward(self, tau):
+#         return t2v(tau, self.f, self.out_features, self.w, self.b, self.w0, self.b0)
+
+
+# class Time2Vec(nn.Module):  # 将时间映射到高维向量空间，并通过全连接层进一步变换
+#     def __init__(self, activation, hiddem_dim, output_dim):
+#         super(Time2Vec, self).__init__()
+#         if activation == "sin":  # 在两种激活函数里选一种
+#             self.l1 = SineActivation(1, hiddem_dim)
+#         elif activation == "cos":
+#             self.l1 = CosineActivation(1, hiddem_dim)
+
+#         # self.fc1 = nn.Linear(hiddem_dim, 128)  # 全连接层
+#         # self.fc1 = nn.Linear(hiddem_dim, output_dim)  # 全连接层 
+ 
+#     def forward(self, x):
+#         fea = x.view(-1, 1)
+#         return self.l1(fea)
+#         # x = self.l1(x)
+#         # x = self.fc1(x)
+#         # return x  # 返回形状为 (batch_size, max_len, output_dim) 的向量。这里的output_dim就是hidden_size
+
+
+def t2v(tau, f, out_features, w, b, w0, b0, arg=None):
+    """
+    时间编码函数：支持输入形状 [batch_size, seq_len]
+    """
+    tau = tau.float()
+    if arg:
+        v1 = f(torch.matmul(tau.unsqueeze(-1), w) + b, arg)  # 添加维度适配矩阵乘法
+    else:
+        v1 = f(torch.matmul(tau.unsqueeze(-1), w) + b)
+    v2 = torch.matmul(tau.unsqueeze(-1), w0) + b0
+    return torch.cat([v1, v2], -1)  # 在最后一维拼接
+
+
+class SineActivation(nn.Module):
+    def __init__(self, in_features, out_features):
+        super(SineActivation, self).__init__()
+        self.out_features = out_features
+        self.w0 = nn.parameter.Parameter(torch.randn(in_features, 1))  # 线性部分参数
+        self.b0 = nn.parameter.Parameter(torch.randn(in_features, 1))
+        self.w = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))  # 非线性部分
+        self.b = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))
+        self.f = torch.sin  # 使用 sin 作为激活函数
+
+    def forward(self, tau):
+        return t2v(tau, self.f, self.out_features, self.w, self.b, self.w0, self.b0)
+
+
+class CosineActivation(nn.Module):
+    def __init__(self, in_features, out_features):
+        super(CosineActivation, self).__init__()
+        self.out_features = out_features
+        self.w0 = nn.parameter.Parameter(torch.randn(in_features, 1))
+        self.b0 = nn.parameter.Parameter(torch.randn(in_features, 1))
+        self.w = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))
+        self.b = nn.parameter.Parameter(torch.randn(in_features, out_features - 1))
+        self.f = torch.cos
+
+    def forward(self, tau):
+        return t2v(tau, self.f, self.out_features, self.w, self.b, self.w0, self.b0)
+
+
+class Time2Vec(nn.Module):
+    def __init__(self, activation, none_args, out_dim):
+        super(Time2Vec, self).__init__()
+        if activation == "sin":
+            self.l1 = SineActivation(1, out_dim)
+        elif activation == "cos":
+            self.l1 = CosineActivation(1, out_dim)
+
+    def forward(self, x):
+        """
+        x: [batch_size, seq_len]，输入时间数据
+        返回: [batch_size, seq_len, out_dim]，时间编码后的数据
+        """
+        return self.l1(x)  # 直接传入整个时间序列
+
+
+
+# 旋转的函数
+def rotate_batch(head, relation, hidden, device):
+    # head形状为(batch_size, seq_len, hidden_dim * 2),上下两层是复数
+    # relation的形状是(batch_size, seq_len, hidden_dim)
+    pi = 3.14159265358979323846
+
+    re_head, im_head = torch.chunk(head, 2, dim=2)  # 拆分成实部和虚部
+
+    # Make phases of relations uniformly distributed in [-pi, pi]
+    embedding_range = nn.Parameter(
+        torch.Tensor([(24.0 + 2.0) / hidden]),
+        requires_grad=False
+    ).to(device)
+
+    phase_relation = relation / (embedding_range / pi)
+
+    re_relation = torch.cos(phase_relation)
+    im_relation = torch.sin(phase_relation)
+
+    # 应用旋转操作
+    re_score = re_head * re_relation - im_head * im_relation
+    im_score = re_head * im_relation + im_head * re_relation
+
+    score = torch.cat([re_score, im_score], dim=2)
+    return score  # 形状为 (batch_size, seq_len, hidden_dim * 2)。
+
+
 class SiLU(nn.Module):
     def forward(self, x):
         return x * th.sigmoid(x)
@@ -258,16 +412,20 @@ class TransformerBlock(nn.Module):
 class Transformer_rep(nn.Module):
     def __init__(self, args):
         super(Transformer_rep, self).__init__()
-        self.hidden_size = args.hidden_size
-        self.heads = 4
-        self.dropout = args.dropout
-        self.n_blocks = args.num_blocks
+        self.hidden_size = args.hidden_size  # 隐藏层大小
+        self.heads = 4  # 多头注意力机制的头数
+        self.dropout = args.dropout  
+        self.n_blocks = args.num_blocks  # Transformer 块的数量 
+        # 一个包含多个 TransformerBlock 的模块列表，每个块都是一个独立的 Transformer 编码器。
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(self.hidden_size, self.heads, self.dropout) for _ in range(self.n_blocks)])
 
     def forward(self, hidden, mask):
+        # hidden: 输入的特征表示，形状为 (batch_size, seq_len, hidden_size)。
+        # mask: 序列掩码，形状为 (batch_size, seq_len)，用于标识哪些位置是有效的（非填充值）。
         for transformer in self.transformer_blocks:
             hidden = transformer.forward(hidden, mask)
+        # 返回经过所有 Transformer 块编码后的 hidden。形状不变。
         return hidden
 
 
@@ -275,20 +433,32 @@ class Diffu_xstart(nn.Module):
     def __init__(self, hidden_size, args):
         super(Diffu_xstart, self).__init__()
         self.hidden_size = hidden_size
+
+        # 线性层，用于对物品表示、加噪表示和时间步嵌入进行变换。
         self.linear_item = nn.Linear(self.hidden_size, self.hidden_size)
         self.linear_xt = nn.Linear(self.hidden_size, self.hidden_size)
         self.linear_t = nn.Linear(self.hidden_size, self.hidden_size)
+
+        # time_embed: 时间步嵌入模块，将时间步 t 转换为嵌入表示。
         time_embed_dim = self.hidden_size * 4
         self.time_embed = nn.Sequential(nn.Linear(self.hidden_size, time_embed_dim), SiLU(), nn.Linear(time_embed_dim, self.hidden_size))
+
+        # fuse_linear: 融合线性层，用于将多个特征融合。
         self.fuse_linear = nn.Linear(self.hidden_size*3, self.hidden_size)
+
+        # att: 注意力机制模块（Transformer_rep）
         self.att = Transformer_rep(args)
         # self.mlp_model = nn.Linear(self.hidden_size, self.hidden_size)
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, batch_first=True)
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, num_layers=args.num_blocks, batch_first=True)
+
+        # 不确定性系数、防止过拟合的dropout、层归一化系数
         self.lambda_uncertainty = args.lambda_uncertainty
         self.dropout = nn.Dropout(args.dropout)
         self.norm_diffu_rep = LayerNorm(self.hidden_size)
 
+    # 将时间步t转化为嵌入表示
+    # 具体方式？
     def timestep_embedding(self, timesteps, dim, max_period=10000):
         """
         Create sinusoidal timestep embeddings.
@@ -307,20 +477,71 @@ class Diffu_xstart(nn.Module):
             embedding = th.cat([embedding, th.zeros_like(embedding[:, :1])], dim=-1)
         return embedding
 
-    def forward(self, rep_item, x_t, t, mask_seq):
-        emb_t = self.time_embed(self.timestep_embedding(t, self.hidden_size))
-        x_t = x_t + emb_t
+    def forward(self, rep_item, x_t, t, TimeStamp, mask_seq):
+        # rep_item是历史交互序列嵌入，x_t是加噪后的目标向量，t是时间步，mask_seq是序列掩码
+        # (mask_seq不是位置编码，就只是一种掩码)
+        emb_t = self.time_embed(self.timestep_embedding(t, self.hidden_size))  # 对时间步进行编码
+        x_t = x_t + emb_t 
         
         # lambda_uncertainty = th.normal(mean=th.full(rep_item.shape, 1.0), std=th.full(rep_item.shape, 1.0)).to(x_t.device)
         
-        lambda_uncertainty = th.normal(mean=th.full(rep_item.shape, self.lambda_uncertainty), std=th.full(rep_item.shape, self.lambda_uncertainty)).to(x_t.device)  ## distribution
+        # 生成不确定性系数 lambda_uncertainty，即λ
+        lambda_uncertainty = th.normal(mean=th.full(rep_item.shape, self.lambda_uncertainty), 
+        std=th.full(rep_item.shape, self.lambda_uncertainty)).to(x_t.device)  ## distribution
         # lambda_uncertainty = self.lambda_uncertainty  ### fixed
         
-        ####  Attention
-        rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)
-        rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
-        out = rep_diffu[:, -1, :]
+        ####  Attention：把整理好的向量(z1,z2,...zn)放入tranformer中
 
+        # 对时间戳进行编码
+        # 首先把时间戳按照日和周来划分。初始时间向量的大小是：(batch_size, max_len)，我需要拆成同样大小的日向量和周向量
+        formatted_times = [[datetime.fromtimestamp(ts) for ts in seq] for seq in TimeStamp.tolist()]
+        norm_times = [[get_norm_time96(time) / 96 for time in row] for row in formatted_times]  # 时间归一化到[0,1]
+        day_times = [[get_day_norm7(time)/7 for time in row] for row in formatted_times]  # 星期归一化到[0,1]
+        input_seq_time = torch.tensor(norm_times,dtype=torch.float).to(x_t.device)
+        input_seq_day_time = torch.tensor(day_times,dtype=torch.float).to(x_t.device)
+
+        # print(input_seq_day_time.size(), input_seq_time.size())  # torch.Size([512, 50]) torch.Size([512, 50])
+
+        # 对于继承了nn.modlue的类，先初始化这个类，然后直接使用这个类的对象，就相当于调用了forward函数。
+        # 这里的hidden_dim是指time2vec层的
+        # time2vec = Time2Vec('sin', 128, self.hidden_size)  # 如果是直接相加，就不用除以2
+        time2vec = Time2Vec('sin', 128, int(self.hidden_size / 2))  # 用旋转的方法的话，要除以2
+        time2vec.to(x_t.device)  # 将模型移到 GPU 上
+        time2vec_day = Time2Vec('sin', 128, int(self.hidden_size / 2))  # 对时和周的编码要用不同的层
+        time2vec_day.to(x_t.device)
+
+        # 输入的大小为(batch_size, max_len)
+        time_emb_norm = time2vec(input_seq_time)  
+        time_emb_day = time2vec_day(input_seq_day_time)
+        # 输出的大小为(batch_size, max_len, hidden_size)
+        
+        # rep_diffu的大小是(512,50,128)，其他相加的向量也是这个大小。其实就是(batch_size,seq_len,hidden_size)
+        # 时间向量的大小是([512, 50, 64])
+        # 将时间向量和正常的向量直接相加
+        # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)
+        # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + 0.7 * time_emb_norm + 0.3 * time_emb_day, mask_seq)
+
+        # # 使用旋转操作融合向量
+        # Rotate_tmp_norm = rotate_batch(rep_item + lambda_uncertainty * x_t.unsqueeze(1), 
+        # time_emb_norm, int(self.hidden_size / 2), x_t.device)
+        # Rotate_tmp_day = rotate_batch(rep_item + lambda_uncertainty * x_t.unsqueeze(1), 
+        # time_emb_day, int(self.hidden_size / 2), x_t.device)
+        # # 对日和周旋转融合后的向量加权
+        # Rotate_tmp = 0.7 * Rotate_tmp_norm + 0.3 * Rotate_tmp_day
+        # rep_diffu = self.att(Rotate_tmp, mask_seq)
+
+        # 只对poi的嵌入加时间旋转；
+        Rotate_tmp_norm = rotate_batch(rep_item, time_emb_norm, int(self.hidden_size / 2), x_t.device)
+        Rotate_tmp_day = rotate_batch(rep_item, time_emb_day, int(self.hidden_size / 2), x_t.device)
+        # 对日和周旋转融合后的向量加权
+        Rotate_tmp = 0.7 * Rotate_tmp_norm + 0.3 * Rotate_tmp_day
+        rep_diffu = self.att(Rotate_tmp + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)
+
+
+
+        rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
+        # out就是重建后的x0，rep_diffu是(h1,h2,...,hn)
+        out = rep_diffu[:, -1, :]
 
         ## rep_diffu = self.att(rep_item, mask_seq)  ## do not use
         ## rep_diffu = self.dropout(self.norm_diffu_rep(rep_diffu))  ## do not use
@@ -348,23 +569,25 @@ class Diffu_xstart(nn.Module):
 
 
 class DiffuRec(nn.Module):
-    def __init__(self, args,):
+    def __init__(self, args,):  # 初始化扩散模型的参数
         super(DiffuRec, self).__init__()
         self.hidden_size = args.hidden_size
         self.schedule_sampler_name = args.schedule_sampler_name
         self.diffusion_steps = args.diffusion_steps
         self.use_timesteps = space_timesteps(self.diffusion_steps, [self.diffusion_steps])
 
+        # 计算扩散过程中的 betas 和 alphas（这些控制噪声添加的程度）
         self.noise_schedule = args.noise_schedule
         betas = self.get_betas(self.noise_schedule, self.diffusion_steps)
          # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
         self.betas = betas
+
         assert len(betas.shape) == 1, "betas must be 1-D"
         assert (betas > 0).all() and (betas <= 1).all()
         alphas = 1.0 - betas
-        self.alphas_cumprod = np.cumprod(alphas, axis=0)
-        self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
+        self.alphas_cumprod = np.cumprod(alphas, axis=0)  # 表示累积乘积，用于扩散过程中的标准化。
+        self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])  # 前一个时间步的累积乘积，帮助计算后续时间步的变化。
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
@@ -397,13 +620,13 @@ class DiffuRec(nn.Module):
         return betas
     
 
-    def q_sample(self, x_start, t, noise=None, mask=None):
+    def q_sample(self, x_start, t, noise=None, mask=None):  # q_sample：根据给定的初始数据 x_start 和当前时间步 t，生成在该时间步 t 时的噪声数据 x_t。
         """
         Diffuse the data for a given number of diffusion steps.
 
         In other words, sample from q(x_t | x_0).
 
-        :param x_start: the initial data batch.
+        :param x_start: the initial data batch. 
         :param t: the number of diffusion steps (minus 1). Here, 0 means one step.
         :param noise: if specified, the split-out normal noise.
         :param mask: anchoring masked position
@@ -467,8 +690,11 @@ class DiffuRec(nn.Module):
         assert (posterior_mean.shape[0] == x_start.shape[0])
         return posterior_mean
 
-    def p_mean_variance(self, rep_item, x_t, t, mask_seq):
-        model_output, _ = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), mask_seq)
+    def p_mean_variance(self, rep_item, x_t, t, TimeStamp, mask_seq):
+
+        # print("注意！")
+        # print(mask_seq)
+        model_output, _ = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), TimeStamp, mask_seq)
         
         x_0 = model_output  ##output predict
         # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
@@ -479,32 +705,39 @@ class DiffuRec(nn.Module):
         model_mean = self.q_posterior_mean_variance(x_start=x_0, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
         return model_mean, model_log_variance
 
-    def p_sample(self, item_rep, noise_x_t, t, mask_seq):
-        model_mean, model_log_variance = self.p_mean_variance(item_rep, noise_x_t, t, mask_seq)
+    def p_sample(self, item_rep, noise_x_t, t, TimeStamp, mask_seq):  # 给定当前时间步的噪声数据 x_t，生成去噪后的数据 x_(t-1)。通过采样，逐步将噪声数据恢复到原始数据。
+        model_mean, model_log_variance = self.p_mean_variance(item_rep, noise_x_t, t, TimeStamp, mask_seq)
         noise = th.randn_like(noise_x_t)
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(noise_x_t.shape) - 1))))  # no noise when t == 0
         sample_xt = model_mean + nonzero_mask * th.exp(0.5 * model_log_variance) * noise  ## sample x_{t-1} from the \mu(x_{t-1}) distribution based on the reparameter trick
         return sample_xt
 
-    def reverse_p_sample(self, item_rep, noise_x_t, mask_seq):
+    def reverse_p_sample(self, item_rep, noise_x_t, TimeStamp, mask_seq):  # 通过迭代从时间步 T 到 0，逐步去噪，最终得到没有噪声的原始数据。
         device = next(self.xstart_model.parameters()).device
         indices = list(range(self.num_timesteps))[::-1]
         
         for i in indices: # from T to 0, reversion iteration  
             t = th.tensor([i] * item_rep.shape[0], device=device)
             with th.no_grad():
-                noise_x_t = self.p_sample(item_rep, noise_x_t, t, mask_seq)
+                noise_x_t = self.p_sample(item_rep, noise_x_t, t, TimeStamp, mask_seq)
         return noise_x_t 
 
-    def forward(self, item_rep, item_tag, mask_seq):        
-        noise = th.randn_like(item_tag)
+    def forward(self, item_rep, item_tag, TimeStamp, mask_seq):
+        noise = th.randn_like(item_tag)  # 和初始物品嵌入形状一致的随机噪声
+        # 使用 schedule_sampler 采样时间步 t 和对应的权重 weights。
         t, weights = self.schedule_sampler.sample(item_rep.shape[0], item_tag.device) ## t is sampled from schedule_sampler
         
         # t = self.scale_t(t)
-        x_t = self.q_sample(item_tag, t, noise=noise)
+        x_t = self.q_sample(item_tag, t, noise=noise)  # 调用 q_sample 方法，对目标表示 item_tag 进行正向扩散（加噪）。
         
         # eps, item_rep_out = self.xstart_model(item_rep, x_t, self._scale_timesteps(t), mask_seq)  ## eps predict
         # x_0 = self._predict_xstart_from_eps(x_t, t, eps)
 
-        x_0, item_rep_out = self.xstart_model(item_rep, x_t, self._scale_timesteps(t), mask_seq)  ##output predict
-        return x_0, item_rep_out, weights, t
+        # 调用 xstart_model，预测目标表示 x_0 和扩散后的物品表示 item_rep_out
+        x_0, item_rep_out = self.xstart_model(item_rep, x_t, self._scale_timesteps(t), TimeStamp, mask_seq)  ##output predict
+        # xstart_model 是一个神经网络模块，负责从扩散后的表示 x_t 中恢复目标表示 x_0。
+        # item_rep 是历史交互序列（不包括目标序列）
+
+        return x_0, item_rep_out, weights, t   # 返回预测结果x0、(h1,h2,...,hn)、权重和时间步。
+
+

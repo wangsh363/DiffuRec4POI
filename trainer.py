@@ -79,24 +79,33 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     metric_ks = args.metric_ks
     model_joint = model_joint.to(device)
     is_parallel = args.num_gpu > 1
-    if is_parallel:
+    if is_parallel:  # 如果启用数据并行的话，就在多个GPU上进行训练
         model_joint = nn.DataParallel(model_joint)
     optimizer = optimizers(model_joint, args)
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=args.gamma)
     best_metrics_dict = {'Best_HR@5': 0, 'Best_NDCG@5': 0, 'Best_HR@10': 0, 'Best_NDCG@10': 0, 'Best_HR@20': 0, 'Best_NDCG@20': 0}
     best_epoch = {'Best_epoch_HR@5': 0, 'Best_epoch_NDCG@5': 0, 'Best_epoch_HR@10': 0, 'Best_epoch_NDCG@10': 0, 'Best_epoch_HR@20': 0, 'Best_epoch_NDCG@20': 0}
     bad_count = 0
-    
+
+    # 这里是训练的主体
     for epoch_temp in range(epochs):        
         print('Epoch: {}'.format(epoch_temp))
         logger.info('Epoch: {}'.format(epoch_temp))
         model_joint.train()
     
         flag_update = 0
-        for index_temp, train_batch in enumerate(tra_data_loader):
+        for index_temp, train_batch in enumerate(tra_data_loader):  # 从数据读取器里读取数据
             train_batch = [x.to(device) for x in train_batch]
+            # 将每个批次中的数据（如输入和标签）移到指定的设备上，device是GPU或CPU
+
             optimizer.zero_grad()
-            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis = model_joint(train_batch[0], train_batch[1], train_flag=True)  
+            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis = model_joint(train_batch[0], train_batch[1], train_flag=True)
+            # 将当前批次的输入数据送入模型 `model_joint`，并获得模型输出
+            # `train_batch[0]` 是输入数据，`train_batch[1]` 是目标标签（如分类标签、回归值等）
+            # 训练标志 `train_flag=True` 表示这是在训练阶段
+
+            # 这个输入的数据需要拆解一下，把列表的最后一个标量拿出来，这个是时间。
+
             loss_diffu_value = model_joint.loss_diffu_ce(diffu_rep, train_batch[1])  ## use this not above
           
             loss_all = loss_diffu_value
@@ -108,12 +117,15 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 logger.info('[%d/%d] Loss: %.4f' % (index_temp, len(tra_data_loader), loss_all.item()))
         print("loss in epoch {}: {}".format(epoch_temp, loss_all.item()))
         lr_scheduler.step()
+        # 到这里训练结束了
 
+        # 在模型训练过程中，每隔一定周期（args.eval_interval）对模型进行验证（evaluation）
+        # 并计算推荐系统常用的评估指标（如 HR@K 和 NDCG@K）
         if epoch_temp != 0 and epoch_temp % args.eval_interval == 0:
             print('start predicting: ', datetime.datetime.now())
             logger.info('start predicting: {}'.format(datetime.datetime.now()))
-            model_joint.eval()
-            with torch.no_grad():
+            model_joint.eval()  # 切换模型到评估模式。这个是torch模型自己的函数
+            with torch.no_grad():  # 禁用梯度计算
                 metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
                 # metrics_dict_mean = {}
                 for val_batch in val_data_loader:
@@ -121,10 +133,12 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     scores_rec, rep_diffu, _, _, _, _ = model_joint(val_batch[0], val_batch[1], train_flag=False)
                     scores_rec_diffu = model_joint.diffu_rep_pre(rep_diffu)    ### inner_production
                     # scores_rec_diffu = model_joint.routing_rep_pre(rep_diffu)   ### routing_rep_pre
+                    # 把正确答案提取一下
                     metrics = hrs_and_ndcgs_k(scores_rec_diffu, val_batch[1], metric_ks)
                     for k, v in metrics.items():
                         metrics_dict[k].append(v)
-                        
+
+
             for key_temp, values_temp in metrics_dict.items():
                 values_mean = round(np.mean(values_temp) * 100, 4)
                 if values_mean > best_metrics_dict['Best_' + key_temp]:
@@ -200,7 +214,6 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         path_data_category = '../datasets/data/category/' + args.dataset +'/DiffuRec_top100_category.pkl'
         with open(path_data_category, 'wb') as f:
             pickle.dump(category_list_100, f)
-            
 
     return best_model, test_metrics_dict_mean
     

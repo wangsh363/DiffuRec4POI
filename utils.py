@@ -1,26 +1,33 @@
 import torch.utils.data as data_utils
 import torch
+import torch.nn as nn
+from datetime import datetime
 
+
+# 我的数据里使用了元组。如果有在元组这一方面报错，那么我将会把我的数据都改成列表的
 
 class TrainDataset(data_utils.Dataset):
     def __init__(self, id2seq, max_len):
         self.id2seq = id2seq
-        self.max_len = max_len
+        self.max_len = max_len  # 后面把时间信息也放进列表里了，所以这里要加1吗？似乎不用。。
 
     def __len__(self):
         return len(self.id2seq)
 
     def __getitem__(self, index):
         seq = self._getseq(index)
-        labels = [seq[-1]]
-        tokens = seq[:-1]
-        tokens = tokens[-self.max_len:]
+        labels = [seq[-1][0]]  # 标签是序列的最后一个元素(就是最后一个交互物品的序号),最后一个元素是元组，取元组的第一个
+        tokens = seq[:-1] 
+        tokens = [[item[0], int(item[1].timestamp())] for item in tokens]
+        tokens = tokens[-self.max_len:]  # 保证 tokens 的长度不超过 max_len
         mask_len = self.max_len - len(tokens)
-        tokens = [0] * mask_len + tokens
+        tokens = [[0, 0]] * mask_len + tokens   # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
+        
         return torch.LongTensor(tokens), torch.LongTensor(labels)
+        # longTensor期待转入的是一个格式统一的列表[1,666,7,...]，不允许其他值存在(比如[(1,0),(1,2),1]这种是不行的)
 
     def _getseq(self, idx):
-        return self.id2seq[idx]
+        return self.id2seq[idx] 
 
 
 class Data_Train():
@@ -28,7 +35,7 @@ class Data_Train():
         self.u2seq = data_train
         self.max_len = args.max_len
         self.batch_size = args.batch_size
-        self.split_onebyone()
+        self.split_onebyone()  # 我搞不懂这样分割的作用是什么？后面的数据里也看不出用意？
 
     def split_onebyone(self):
         self.id_seq = {}
@@ -42,7 +49,12 @@ class Data_Train():
 
     def get_pytorch_dataloaders(self):
         dataset = TrainDataset(self.id_seq, self.max_len)
-        return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True)
+        # 在dataset放入torch的dataloader函数之前，需要做好len()求数据集大小的函数，还有getitem()根据索引返回一条数据的函数
+        # 最后一个物品的交互时间也是已知的、输入的量，输入的不仅仅是交互序列，该怎么组织代码？
+        return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True)  
+        # 这个dataset也只是一个对象。用getitem函数之后才返回了训练序列和标签
+        # 在最开始的字典里，是序号：物品列表。那么加入：序号：[(物品1，时间1),(物品2，时间2),(物品3，时间3),...])。
+        # 然后读取的时候，把时间单独读取进来？具体可能要查torch的dataloader函数了
 
 
 class ValDataset(data_utils.Dataset):
@@ -58,12 +70,14 @@ class ValDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user]
-        answer = self.u2answer[user]
+        answer = [self.u2answer[user][0][0]]
+        seq = [[item[0], int(item[1].timestamp())] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [0] * padding_len + seq
-        return torch.LongTensor(seq),  torch.LongTensor(answer)
+        seq = [[0, 0]] * padding_len + seq
 
+        return torch.LongTensor(seq),  torch.LongTensor(answer)
+        # 只有用到这个函数才会发生，没有默认发生。
 
 class Data_Val():
     def __init__(self, data_train, data_val, args):
@@ -71,12 +85,12 @@ class Data_Val():
         self.u2seq = data_train
         self.u2answer = data_val
         self.max_len = args.max_len
-        
 
     def get_pytorch_dataloaders(self):
         dataset = ValDataset(self.u2seq, self.u2answer, self.max_len)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
         return dataloader
+
 
 
 class TestDataset(data_utils.Dataset):
@@ -93,11 +107,15 @@ class TestDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user] + self.u2seq_add[user]
+        seq = [[item[0], int(item[1].timestamp())] for item in seq]
         # seq = self.u2seq[user]
-        answer = self.u2answer[user]
+        answer = [self.u2answer[user][0][0]]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [0] * padding_len + seq
+        seq = [[0, 0]] * padding_len + seq
+
+        # print('attention！')
+        # print(len(seq), answer)
         return torch.LongTensor(seq), torch.LongTensor(answer)
 
 
@@ -127,10 +145,11 @@ class CHLSDataset(data_utils.Dataset):
 
         data_temp = self.data[index]
         seq = data_temp[:-1]
-        answer = [data_temp[-1]]
+        seq = [[item[0], int(item[1].timestamp())] for item in seq]
+        answer = [data_temp[-1][0]]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [0] * padding_len + seq
+        seq = [[0, 0]] * padding_len + seq
         return torch.LongTensor(seq), torch.LongTensor(answer)
 
 
@@ -144,3 +163,21 @@ class Data_CHLS():
         dataset = CHLSDataset(self.data, self.max_len)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
         return dataloader
+
+
+def get_norm_time96(time):
+    hour = time.hour
+    minute = time.minute
+    
+    ans = minute//15 + 4*hour
+    
+    return ans
+
+def get_day_norm7(time):
+    # day_number = time.dayofweek
+    day_number = time.weekday() + 1
+    if time.timestamp() == 0:  # 处理时间戳 0 的情况
+        return 0
+    # 除了时间戳0，其他的时间从1开始，到7。不过归一化用的也是除以7，也就是说归一化之后最大的数字可以到达1
+    return day_number
+

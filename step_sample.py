@@ -33,9 +33,20 @@ class ScheduleSampler(ABC):
                  - weights: a tensor of weights to scale the resulting losses.
         """
         w = self.weights() 
+        # print(f"w: {w}")  # 打印权重数组
+        # print("batch_size", batch_size)
         p = w / np.sum(w)
+        # print(f"p: {p}")  # 打印概率分布
         indices_np = np.random.choice(len(p), size=(batch_size,), p=p)
+        # print('attention!')
+        # print(f"indices_np: {indices_np}")
+
+        # print(f"item_tag.device: {item_tag.device}")
+        # print(f"CUDA available: {th.cuda.is_available()}")
+        # print(f"GPU memory: {th.cuda.memory_allocated() / 1024 ** 2} MB")
+
         indices = th.from_numpy(indices_np).long().to(device)
+        # indices = th.from_numpy(indices_np).long().to('cpu')
         weights_np = 1 / (len(p) * p[indices_np])
         weights = th.from_numpy(weights_np).float().to(device)
         return indices, weights
@@ -112,7 +123,7 @@ class LossSecondMomentResampler(LossAwareSampler):
         self._loss_history = np.zeros(
             [self.num_timesteps, history_per_term], dtype=np.float64
         )
-        self._loss_counts = np.zeros([self.num_timesteps], dtype=np.int)
+        self._loss_counts = np.zeros([self.num_timesteps], dtype=int)
 
     def weights(self):
         if not self._warmed_up():

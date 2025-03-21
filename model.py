@@ -30,6 +30,9 @@ class Att_Diffuse_model(nn.Module):
         super(Att_Diffuse_model, self).__init__()
         self.emb_dim = args.hidden_size
         self.item_num = args.item_num+1
+        # 这是一个嵌入层。第一个参数是最大索引值，第二个参数是嵌入层维度。用来给物品id编码
+        # 最大索引值通过smap的长度来确定。
+        # 但是ca的smap不是按照长度来分配的。要改一下。
         self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
         self.embed_dropout = nn.Dropout(args.emb_dropout)
         self.position_embeddings = nn.Embedding(args.max_len, args.hidden_size)
@@ -40,12 +43,12 @@ class Att_Diffuse_model(nn.Module):
         self.loss_ce_rec = nn.CrossEntropyLoss(reduction='none')
         self.loss_mse = nn.MSELoss()
 
-    def diffu_pre(self, item_rep, tag_emb, mask_seq):
-        seq_rep_diffu, item_rep_out, weights, t  = self.diffu(item_rep, tag_emb, mask_seq)
-        return seq_rep_diffu, item_rep_out, weights, t 
+    def diffu_pre(self, item_rep, tag_emb, TimeStamp, mask_seq):
+        seq_rep_diffu, item_rep_out, weights, t  = self.diffu(item_rep, tag_emb, TimeStamp, mask_seq)
+        return seq_rep_diffu, item_rep_out, weights, t
 
-    def reverse(self, item_rep, noise_x_t, mask_seq):
-        reverse_pre = self.diffu.reverse_p_sample(item_rep, noise_x_t, mask_seq)
+    def reverse(self, item_rep, noise_x_t, TimeStamp, mask_seq):
+        reverse_pre = self.diffu.reverse_p_sample(item_rep, noise_x_t, TimeStamp, mask_seq)
         return reverse_pre
 
     def loss_rec(self, scores, labels):
@@ -76,6 +79,7 @@ class Att_Diffuse_model(nn.Module):
 
     def diffu_rep_pre(self, rep_diffu):
         scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())
+        # 计算前后两个向量的相似度得分。后面这个weight好像是可学习的参数矩阵
         return scores
     
     def loss_rmse(self, rep_diffu, labels):
@@ -106,34 +110,54 @@ class Att_Diffuse_model(nn.Module):
         sim_mat = torch.sigmoid(-torch.matmul(item_norm, seq_rep_norm.unsqueeze(-1)).squeeze(-1))
         return torch.mean(torch.sum(sim_mat, dim=-1)/torch.sum(mask_seq, dim=-1))
 
+    # sequence是输入的序列，最后一个数据是时间，前面的是历史交互元组(物品，时间)。tag是label标签。
+    # train_flag表示是否为训练模式
     def forward(self, sequence, tag, train_flag=True): 
-        seq_length = sequence.size(1)
+        seq_length = sequence.size(1)   # 用户的历史行为序列（物品 ID 序列）
         # position_ids = torch.arange(seq_length, dtype=torch.long, device=sequence.device)
         # position_ids = position_ids.unsqueeze(0).expand_as(sequence)
         # position_embeddings = self.position_embeddings(position_ids)
 
-        item_embeddings = self.item_embeddings(sequence)
+        # 现在把sequence里的时间信息取出来
+        # 理想的数据是这样的：
+        # sequence的size为：torch.Size([512, 50, 2]), 也就是（batch_size，max_len, 2）
+        # 这个时间戳的大小应该是torch.Size([512, 50])，id的大小也是[512,50]，即（batch_size，max_len）
+        last_timestamp = sequence[..., 1]  # 取最后一维的第一个值
+        sequence = sequence[..., 0]  # 取最后一维的第二个值
+
+        # print("Max index:", sequence.max().item())  # 最大索引
+        # print("Min index:", sequence.min().item())  # 最小索引
+        # print("Embedding size:", self.item_embeddings.num_embeddings)  # 允许的最大索引
+
+        item_embeddings = self.item_embeddings(sequence)  # 将离散的整数索引映射到连续的高维空间中
         item_embeddings = self.embed_dropout(item_embeddings)  ## dropout first than layernorm
+        # item_embeddings是历史交互序列的嵌入
 
         # item_embeddings = item_embeddings + position_embeddings
-
-        item_embeddings = self.LayerNorm(item_embeddings)
+        item_embeddings = self.LayerNorm(item_embeddings)  # 归一化
         
-        mask_seq = (sequence>0).float()
+        mask_seq = (sequence>0).float()  # 这行代码的作用是生成一个掩码（mask），
+        # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。
+        # float是把布尔值转化为0和1
         
-        if train_flag:
-            tag_emb = self.item_embeddings(tag.squeeze(-1))  ## B x H
-            rep_diffu, rep_item, weights, t = self.diffu_pre(item_embeddings, tag_emb, mask_seq)
+        if train_flag:  # 如果是训练模式
+            tag_emb = self.item_embeddings(tag.squeeze(-1))  ## B x H   # 这个tag就是x0
+            rep_diffu, rep_item, weights, t = self.diffu_pre(item_embeddings, tag_emb, last_timestamp, mask_seq)  # 进行扩散
+            # 输入的分别是：历史交互序列的嵌入表示、tag(就是x0)、位置掩码
+            # 输出的分别是：
+            # rep_diffu：重建的x0_hat
+            # rep_item:（h1,h2,...,hn）
+            # weights是权重，t是时间步
             
             # item_rep_dis = self.regularization_rep(rep_item, mask_seq)
             # seq_rep_dis = self.regularization_seq_item_rep(rep_diffu, rep_item, mask_seq)
             
             item_rep_dis = None
             seq_rep_dis = None
-        else:
+        else:  # 如果是推理模式
             # noise_x_t = th.randn_like(tag_emb)
             noise_x_t = th.randn_like(item_embeddings[:,-1,:])
-            rep_diffu = self.reverse(item_embeddings, noise_x_t, mask_seq)
+            rep_diffu = self.reverse(item_embeddings, noise_x_t, last_timestamp, mask_seq)
             weights, t, item_rep_dis, seq_rep_dis = None, None, None, None
 
         # item_rep = self.model_main(item_embeddings, rep_diffu, mask_seq)
@@ -146,3 +170,4 @@ class Att_Diffuse_model(nn.Module):
 def create_model_diffu(args):
     diffu_pre = DiffuRec(args)
     return diffu_pre
+
