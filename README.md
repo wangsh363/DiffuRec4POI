@@ -13,7 +13,7 @@
 1. Create environment & Install requirements
 
     ```
-    conda new -n DiffuRec4POI python=3.9
+    conda create -n DiffuRec4POI python=3.9
     ```
 
     ```
