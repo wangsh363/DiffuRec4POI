@@ -39,17 +39,17 @@ class Att_Diffuse_model(nn.Module):
         self.LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(args.dropout)
         self.diffu = diffu
-        self.loss_ce = nn.CrossEntropyLoss()
+        self.loss_ce = nn.CrossEntropyLoss()  # 交叉熵损失
         self.loss_ce_rec = nn.CrossEntropyLoss(reduction='none')
         self.loss_mse = nn.MSELoss()
 
     def diffu_pre(self, item_rep, tag_emb, TimeStamp, mask_seq):
-        seq_rep_diffu, item_rep_out, weights, t  = self.diffu(item_rep, tag_emb, TimeStamp, mask_seq)
-        return seq_rep_diffu, item_rep_out, weights, t
+        seq_rep_diffu, item_rep_out, weights, t, time_target  = self.diffu(item_rep, tag_emb, TimeStamp, mask_seq)
+        return seq_rep_diffu, item_rep_out, weights, t, time_target
 
     def reverse(self, item_rep, noise_x_t, TimeStamp, mask_seq):
-        reverse_pre = self.diffu.reverse_p_sample(item_rep, noise_x_t, TimeStamp, mask_seq)
-        return reverse_pre
+        reverse_pre, time_target = self.diffu.reverse_p_sample(item_rep, noise_x_t, TimeStamp, mask_seq)
+        return reverse_pre, time_target
 
     def loss_rec(self, scores, labels):
         return self.loss_ce(scores, labels.squeeze(-1))
@@ -67,7 +67,13 @@ class Att_Diffuse_model(nn.Module):
         return loss   
 
     def loss_diffu_ce(self, rep_diffu, labels):
-        scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())
+
+        scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  # 对self.item_embeddings.weight.t() 进行时间的改变
+        # print("你好")
+        # print(scores)
+        # print(scores.size())
+        # print("!!!!!!!!!!!!!!!!!!!")
+        # print(labels.squeeze(-1))
         """
         ### norm scores
         item_emb_norm = F.normalize(self.item_embeddings.weight, dim=-1)
@@ -75,10 +81,11 @@ class Att_Diffuse_model(nn.Module):
         temperature = 0.07
         scores = torch.matmul(rep_diffu_norm, item_emb_norm.t())/temperature
         """
-        return self.loss_ce(scores, labels.squeeze(-1))
+        return self.loss_ce(scores, labels.squeeze(-1))  # 作用是去掉最后一个维度
 
     def diffu_rep_pre(self, rep_diffu):
-        scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())
+        # 修改
+        scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  # 计算rep_difffu与所有物品的相似度，也就是每个物品的匹配分数
         # 计算前后两个向量的相似度得分。后面这个weight好像是可学习的参数矩阵
         return scores
     
@@ -110,7 +117,7 @@ class Att_Diffuse_model(nn.Module):
         sim_mat = torch.sigmoid(-torch.matmul(item_norm, seq_rep_norm.unsqueeze(-1)).squeeze(-1))
         return torch.mean(torch.sum(sim_mat, dim=-1)/torch.sum(mask_seq, dim=-1))
 
-    # sequence是输入的序列，最后一个数据是时间，前面的是历史交互元组(物品，时间)。tag是label标签。
+    # sequence是输入的序列，最后一个数据是[0, 时间]，前面的是历史交互元组(物品，时间)。tag是label标签。
     # train_flag表示是否为训练模式
     def forward(self, sequence, tag, train_flag=True): 
         seq_length = sequence.size(1)   # 用户的历史行为序列（物品 ID 序列）
@@ -122,8 +129,8 @@ class Att_Diffuse_model(nn.Module):
         # 理想的数据是这样的：
         # sequence的size为：torch.Size([512, 50, 2]), 也就是（batch_size，max_len, 2）
         # 这个时间戳的大小应该是torch.Size([512, 50])，id的大小也是[512,50]，即（batch_size，max_len）
-        last_timestamp = sequence[..., 1]  # 取最后一维的第一个值
-        sequence = sequence[..., 0]  # 取最后一维的第二个值
+        last_timestamp = sequence[..., 1]  # 取最后一维的第二个值
+        sequence = sequence[..., 0]  # 取最后一维的第一个值
 
         # print("Max index:", sequence.max().item())  # 最大索引
         # print("Min index:", sequence.min().item())  # 最小索引
@@ -136,13 +143,15 @@ class Att_Diffuse_model(nn.Module):
         # item_embeddings = item_embeddings + position_embeddings
         item_embeddings = self.LayerNorm(item_embeddings)  # 归一化
         
+        # mask_seq的大小是[512, 50]
         mask_seq = (sequence>0).float()  # 这行代码的作用是生成一个掩码（mask），
-        # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。
-        # float是把布尔值转化为0和1
+        # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。float是把布尔值转化为0和1
+        # 有一个关键的参数：最后一个值一定要是有效的，因为最后一个值是由目标时间和0组成的。
+        mask_seq[:, -1] = 1
         
         if train_flag:  # 如果是训练模式
             tag_emb = self.item_embeddings(tag.squeeze(-1))  ## B x H   # 这个tag就是x0
-            rep_diffu, rep_item, weights, t = self.diffu_pre(item_embeddings, tag_emb, last_timestamp, mask_seq)  # 进行扩散
+            rep_diffu, rep_item, weights, t, time_target = self.diffu_pre(item_embeddings, tag_emb, last_timestamp, mask_seq)  # 进行扩散
             # 输入的分别是：历史交互序列的嵌入表示、tag(就是x0)、位置掩码
             # 输出的分别是：
             # rep_diffu：重建的x0_hat
@@ -156,15 +165,16 @@ class Att_Diffuse_model(nn.Module):
             seq_rep_dis = None
         else:  # 如果是推理模式
             # noise_x_t = th.randn_like(tag_emb)
+
             noise_x_t = th.randn_like(item_embeddings[:,-1,:])
-            rep_diffu = self.reverse(item_embeddings, noise_x_t, last_timestamp, mask_seq)
+            rep_diffu, time_target = self.reverse(item_embeddings, noise_x_t, last_timestamp, mask_seq)
             weights, t, item_rep_dis, seq_rep_dis = None, None, None, None
 
         # item_rep = self.model_main(item_embeddings, rep_diffu, mask_seq)
         # seq_rep = item_rep[:, -1, :]
         # scores = torch.matmul(seq_rep, self.item_embeddings.weight.t())
         scores = None
-        return scores, rep_diffu, weights, t, item_rep_dis, seq_rep_dis
+        return scores, rep_diffu, weights, t, item_rep_dis, seq_rep_dis, time_target
         
 
 def create_model_diffu(args):

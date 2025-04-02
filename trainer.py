@@ -87,6 +87,15 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     best_epoch = {'Best_epoch_HR@5': 0, 'Best_epoch_NDCG@5': 0, 'Best_epoch_HR@10': 0, 'Best_epoch_NDCG@10': 0, 'Best_epoch_HR@20': 0, 'Best_epoch_NDCG@20': 0}
     bad_count = 0
 
+
+    # # 输出模型的可训练参数表
+    # print('注意')
+    # print("Model parameters count:", len(list(model_joint.parameters())))
+    # for name, param in model_joint.named_parameters():
+    #     print(f"{name}: requires_grad={param.requires_grad}")
+
+
+
     # 这里是训练的主体
     for epoch_temp in range(epochs):        
         print('Epoch: {}'.format(epoch_temp))
@@ -99,19 +108,29 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             # 将每个批次中的数据（如输入和标签）移到指定的设备上，device是GPU或CPU
 
             optimizer.zero_grad()
-            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis = model_joint(train_batch[0], train_batch[1], train_flag=True)
+            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(train_batch[0], train_batch[1], train_flag=True)
             # 将当前批次的输入数据送入模型 `model_joint`，并获得模型输出
             # `train_batch[0]` 是输入数据，`train_batch[1]` 是目标标签（如分类标签、回归值等）
             # 训练标志 `train_flag=True` 表示这是在训练阶段
 
-            # 这个输入的数据需要拆解一下，把列表的最后一个标量拿出来，这个是时间。
 
-            loss_diffu_value = model_joint.loss_diffu_ce(diffu_rep, train_batch[1])  ## use this not above
+            # loss_diffu_value = model_joint.loss_diffu_ce(diffu_rep, train_batch[1])  
+            # print(diffu_rep.size(), diffu_rep.dtype)
+            # print(train_batch[1].size(), train_batch[1].dtype)
+            # print(time_target.size(), time_target.dtype)
+            # print(train_batch[1])
+            # print("**********************************************")
+            # # print(time_target)
+
+
+            loss_diffu_value = model_joint.loss_diffu_ce(diffu_rep, train_batch[1])   # 目标物品本身加时间
+
           
             loss_all = loss_diffu_value
             loss_all.backward()
-        
+
             optimizer.step()
+
             if index_temp % int(len(tra_data_loader) / 5 + 1) == 0:
                 print('[%d/%d] Loss: %.4f' % (index_temp, len(tra_data_loader), loss_all.item()))
                 logger.info('[%d/%d] Loss: %.4f' % (index_temp, len(tra_data_loader), loss_all.item()))
@@ -130,7 +149,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 # metrics_dict_mean = {}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
-                    scores_rec, rep_diffu, _, _, _, _ = model_joint(val_batch[0], val_batch[1], train_flag=False)
+                    scores_rec, rep_diffu, _, _, _, _, _ = model_joint(val_batch[0], val_batch[1], train_flag=False)
                     scores_rec_diffu = model_joint.diffu_rep_pre(rep_diffu)    ### inner_production
                     # scores_rec_diffu = model_joint.routing_rep_pre(rep_diffu)   ### routing_rep_pre
                     # 把正确答案提取一下
@@ -172,7 +191,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         test_metrics_dict_mean = {}
         for test_batch in test_data_loader:
             test_batch = [x.to(device) for x in test_batch]
-            scores_rec, rep_diffu, _, _, _, _ = best_model(test_batch[0], test_batch[1], train_flag=False)
+            scores_rec, rep_diffu, _, _, _, _, _ = best_model(test_batch[0], test_batch[1], train_flag=False)
             scores_rec_diffu = best_model.diffu_rep_pre(rep_diffu)   ### Inner Production
             # scores_rec_diffu = best_model.routing_rep_pre(rep_diffu)   ### routing
             

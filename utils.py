@@ -4,12 +4,10 @@ import torch.nn as nn
 from datetime import datetime
 
 
-# 我的数据里使用了元组。如果有在元组这一方面报错，那么我将会把我的数据都改成列表的
-
 class TrainDataset(data_utils.Dataset):
     def __init__(self, id2seq, max_len):
         self.id2seq = id2seq
-        self.max_len = max_len  # 后面把时间信息也放进列表里了，所以这里要加1吗？似乎不用。。
+        self.max_len = max_len  
 
     def __len__(self):
         return len(self.id2seq)
@@ -17,12 +15,19 @@ class TrainDataset(data_utils.Dataset):
     def __getitem__(self, index):
         seq = self._getseq(index)
         labels = [seq[-1][0]]  # 标签是序列的最后一个元素(就是最后一个交互物品的序号),最后一个元素是元组，取元组的第一个
+        last_time = seq[-1][1]
         tokens = seq[:-1] 
         tokens = [[item[0], int(item[1].timestamp())] for item in tokens]
         tokens = tokens[-self.max_len:]  # 保证 tokens 的长度不超过 max_len
-        mask_len = self.max_len - len(tokens)
-        tokens = [[0, 0]] * mask_len + tokens   # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
-        
+        mask_len = self.max_len - len(tokens)  
+        if mask_len > 0:
+            mask_len = mask_len - 1  # 序列最长就是50，所以这里减了1。后面使用的序列长度都将是1
+        else:
+            tokens = tokens[1:]
+
+        tokens = [[0, 0]] * mask_len + tokens + [[0, int(last_time.timestamp())]]  # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
+        # 最后一个元素是[0, 目标时间的时间戳]
+
         return torch.LongTensor(tokens), torch.LongTensor(labels)
         # longTensor期待转入的是一个格式统一的列表[1,666,7,...]，不允许其他值存在(比如[(1,0),(1,2),1]这种是不行的)
 
@@ -71,13 +76,18 @@ class ValDataset(data_utils.Dataset):
         user = self.users[index]
         seq = self.u2seq[user]
         answer = [self.u2answer[user][0][0]]
+        last_time = self.u2answer[user][0][1]
         seq = [[item[0], int(item[1].timestamp())] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [[0, 0]] * padding_len + seq
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        seq = [[0, 0]] * padding_len + seq + [[0, int(last_time.timestamp())]]
 
         return torch.LongTensor(seq),  torch.LongTensor(answer)
-        # 只有用到这个函数才会发生，没有默认发生。
+
 
 class Data_Val():
     def __init__(self, data_train, data_val, args):
@@ -110,9 +120,14 @@ class TestDataset(data_utils.Dataset):
         seq = [[item[0], int(item[1].timestamp())] for item in seq]
         # seq = self.u2seq[user]
         answer = [self.u2answer[user][0][0]]
+        last_time = self.u2answer[user][0][1]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [[0, 0]] * padding_len + seq
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        seq = [[0, 0]] * padding_len + seq + [[0, int(last_time.timestamp())]]
 
         # print('attention！')
         # print(len(seq), answer)
@@ -147,9 +162,14 @@ class CHLSDataset(data_utils.Dataset):
         seq = data_temp[:-1]
         seq = [[item[0], int(item[1].timestamp())] for item in seq]
         answer = [data_temp[-1][0]]
+        last_time = data_temp[-1][1]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [[0, 0]] * padding_len + seq
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        seq = [[0, 0]] * padding_len + seq + [[0, int(last_time.timestamp())]]
         return torch.LongTensor(seq), torch.LongTensor(answer)
 
 
@@ -175,9 +195,6 @@ def get_norm_time96(time):
 
 def get_day_norm7(time):
     # day_number = time.dayofweek
-    day_number = time.weekday() + 1
-    if time.timestamp() == 0:  # 处理时间戳 0 的情况
-        return 0
-    # 除了时间戳0，其他的时间从1开始，到7。不过归一化用的也是除以7，也就是说归一化之后最大的数字可以到达1
+    day_number = time.weekday() 
     return day_number
 
