@@ -2,14 +2,61 @@ import torch.utils.data as data_utils
 import torch
 import torch.nn as nn
 from datetime import datetime
+from pyquadkey2 import quadkey as pqk
+from torchtext.vocab import build_vocab_from_iterator
+from nltk import ngrams
 
+# 四键类
+class Quadkey:
+    def __init__(self, qk_str):
+        self.qk_str = qk_str
 
-# 我的数据里使用了元组。如果有在元组这一方面报错，那么我将会把我的数据都改成列表的
+    @staticmethod
+    # 生成四键对象，pyquadkey2类似实现
+    def from_geo(coords, level):
+        # lat, lon = coords
+        # qk_str = latlon2quadkey(lat, lon, level)
+        # return Quadkey(qk_str)
+        qk = pqk.from_geo(coords, level)
+        return Quadkey(qk)
+
+    def __str__(self):
+        return str(self.qk_str)
+
+# def latlon2quadkey(lat, lon, level):
+#     """将经纬度转换为 QuadKey 字符串"""
+#     qk = pqk.from_geo((lat, lon), level)
+#     return str(qk)
+
+def build_quadkey_vocab(data_dict, lod=17):
+    """为所有数据构建统一的 Quadkey 词汇表"""
+    all_quadkeys = []
+    for split in ['train', 'val', 'test']:
+        for seq in data_dict[split].values():
+            for _, _, lat, lon in seq:
+                if lat != 0.0 or lon != 0.0:
+                    qk = Quadkey.from_geo((lat, lon), lod)
+                    qk_str = str(qk)
+                    # 切割字符串
+                    qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+                    all_quadkeys.append(qk_ngrams.split())
+
+    def token_iterator():
+        for tokens in all_quadkeys:
+            yield tokens
+
+    # 使用build_vocab_from_iterator构建词汇表，添加特殊标记<unk>（未知）和<pad>（填充），unk处理未知词汇，pad处理序列长度
+    quadkey_vocab = build_vocab_from_iterator(token_iterator(), specials=['<unk>', '<pad>'])
+    print(f"QUADKEY_VOCAB type: {type(quadkey_vocab)}")
+    print(f"Quadkey 词汇表大小: {len(quadkey_vocab)}")
+    return quadkey_vocab
 
 class TrainDataset(data_utils.Dataset):
-    def __init__(self, id2seq, max_len):
+    def __init__(self, id2seq, max_len, quadkey_vocab, lod=17):
         self.id2seq = id2seq
-        self.max_len = max_len  # 后面把时间信息也放进列表里了，所以这里要加1吗？似乎不用。。
+        self.max_len = max_len
+        self.quadkey_vocab = quadkey_vocab
+        self.lod = lod
 
     def __len__(self):
         return len(self.id2seq)
@@ -17,13 +64,43 @@ class TrainDataset(data_utils.Dataset):
     def __getitem__(self, index):
         seq = self._getseq(index)
         labels = [seq[-1][0]]  # 标签是序列的最后一个元素(就是最后一个交互物品的序号),最后一个元素是元组，取元组的第一个
+        last_time = seq[-1][1]
         tokens = seq[:-1] 
-        tokens = [[item[0], int(item[1].timestamp())] for item in tokens]
+        tokens = [[item[0], int(item[1].timestamp()), item[2], item[3]] for item in tokens]
         tokens = tokens[-self.max_len:]  # 保证 tokens 的长度不超过 max_len
-        mask_len = self.max_len - len(tokens)
-        tokens = [[0, 0]] * mask_len + tokens   # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
-        
-        return torch.LongTensor(tokens), torch.LongTensor(labels)
+        mask_len = self.max_len - len(tokens)  
+        if mask_len > 0:
+            mask_len = mask_len - 1  # 序列最长就是50，所以这里减了1。后面使用的序列长度都将是1
+        else:
+            tokens = tokens[1:]
+
+        tokens = [[0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0.0, 0.0]]
+
+        items = [x[0] for x in tokens]  # 物品序列
+        timestamps = [x[1] for x in tokens]  # 时间戳序列
+
+        quadkeys = []
+        for item in tokens:
+            if item[2] == 0.0 and item[3] == 0.0:
+                quadkeys.append(['0'])
+            else:
+                qk = Quadkey.from_geo((item[2], item[3]), self.lod)
+                qk_str = str(qk)
+                qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+                quadkeys.append(qk_ngrams.split())
+
+        unk_index = self.quadkey_vocab['<unk>']
+        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
+                           qk in quadkeys]
+        max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        pad_index = self.quadkey_vocab['<pad>']
+        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+
+        # 返回包含items、timestamps和quadkey_indices的元组
+        return (torch.LongTensor(items),
+                torch.LongTensor(timestamps),
+                torch.LongTensor(quadkey_indices),
+                torch.LongTensor(labels))
         # longTensor期待转入的是一个格式统一的列表[1,666,7,...]，不允许其他值存在(比如[(1,0),(1,2),1]这种是不行的)
 
     def _getseq(self, idx):
@@ -31,10 +108,11 @@ class TrainDataset(data_utils.Dataset):
 
 
 class Data_Train():
-    def __init__(self, data_train, args):
+    def __init__(self, data_train, args, quadkey_vocab):
         self.u2seq = data_train
         self.max_len = args.max_len
         self.batch_size = args.batch_size
+        self.quadkey_vocab = quadkey_vocab
         self.split_onebyone()  # 我搞不懂这样分割的作用是什么？后面的数据里也看不出用意？
 
     def split_onebyone(self):
@@ -48,7 +126,7 @@ class Data_Train():
                 idx += 1
 
     def get_pytorch_dataloaders(self):
-        dataset = TrainDataset(self.id_seq, self.max_len)
+        dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab)
         # 在dataset放入torch的dataloader函数之前，需要做好len()求数据集大小的函数，还有getitem()根据索引返回一条数据的函数
         # 最后一个物品的交互时间也是已知的、输入的量，输入的不仅仅是交互序列，该怎么组织代码？
         return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True)  
@@ -58,11 +136,13 @@ class Data_Train():
 
 
 class ValDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2answer, max_len):
+    def __init__(self, u2seq, u2answer, max_len, quadkey_vocab, lod=17):
         self.u2seq = u2seq
         self.users = sorted(self.u2seq.keys())
         self.u2answer = u2answer
         self.max_len = max_len
+        self.quadkey_vocab = quadkey_vocab
+        self.lod = lod
 
     def __len__(self):
         return len(self.users)
@@ -71,35 +151,66 @@ class ValDataset(data_utils.Dataset):
         user = self.users[index]
         seq = self.u2seq[user]
         answer = [self.u2answer[user][0][0]]
-        seq = [[item[0], int(item[1].timestamp())] for item in seq]
+        last_time = self.u2answer[user][0][1]
+        seq = [[item[0], int(item[1].timestamp()), item[2], item[3]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [[0, 0]] * padding_len + seq
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
 
-        return torch.LongTensor(seq),  torch.LongTensor(answer)
-        # 只有用到这个函数才会发生，没有默认发生。
+        items = [x[0] for x in seq]
+        timestamps = [x[1] for x in seq]
+
+        quadkeys = []
+        for item in seq:
+            if item[2] == 0.0 and item[3] == 0.0:
+                quadkeys.append(['0'])
+            else:
+                qk = Quadkey.from_geo((item[2], item[3]), self.lod)
+                qk_str = str(qk)
+                qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+                quadkeys.append(qk_ngrams.split())
+
+        unk_index = self.quadkey_vocab['<unk>']
+        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
+                           qk in quadkeys]
+        max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        pad_index = self.quadkey_vocab['<pad>']
+        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+
+        return (torch.LongTensor(items),
+                torch.LongTensor(timestamps),
+                torch.LongTensor(quadkey_indices),
+                torch.LongTensor(answer))
+
 
 class Data_Val():
-    def __init__(self, data_train, data_val, args):
+    def __init__(self, data_train, data_val, args, quadkey_vocab):
         self.batch_size = args.batch_size
         self.u2seq = data_train
         self.u2answer = data_val
         self.max_len = args.max_len
+        self.quadkey_vocab = quadkey_vocab
 
     def get_pytorch_dataloaders(self):
-        dataset = ValDataset(self.u2seq, self.u2answer, self.max_len)
+        dataset = ValDataset(self.u2seq, self.u2answer, self.max_len, self.quadkey_vocab)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
         return dataloader
 
 
 
 class TestDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2_seq_add, u2answer, max_len):
+    def __init__(self, u2seq, u2_seq_add, u2answer, max_len, quadkey_vocab, lod=17):
         self.u2seq = u2seq
         self.u2seq_add = u2_seq_add
         self.users = sorted(self.u2seq.keys())
         self.u2answer = u2answer
         self.max_len = max_len
+        self.quadkey_vocab = quadkey_vocab
+        self.lod = lod
 
     def __len__(self):
         return len(self.users)
@@ -107,36 +218,65 @@ class TestDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user] + self.u2seq_add[user]
-        seq = [[item[0], int(item[1].timestamp())] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2], item[3]] for item in seq]
         # seq = self.u2seq[user]
         answer = [self.u2answer[user][0][0]]
+        last_time = self.u2answer[user][0][1]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [[0, 0]] * padding_len + seq
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
 
-        # print('attention！')
-        # print(len(seq), answer)
-        return torch.LongTensor(seq), torch.LongTensor(answer)
+        items = [x[0] for x in seq]
+        timestamps = [x[1] for x in seq]
+
+        quadkeys = []
+        for item in seq:
+            if item[2] == 0.0 and item[3] == 0.0:
+                quadkeys.append(['0'])
+            else:
+                qk = Quadkey.from_geo((item[2], item[3]), self.lod)
+                qk_str = str(qk)
+                qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+                quadkeys.append(qk_ngrams.split())
+
+        unk_index = self.quadkey_vocab['<unk>']
+        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
+                           qk in quadkeys]
+        max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        pad_index = self.quadkey_vocab['<pad>']
+        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+
+        return (torch.LongTensor(items),
+                torch.LongTensor(timestamps),
+                torch.LongTensor(quadkey_indices),
+                torch.LongTensor(answer))
 
 
 class Data_Test():
-    def __init__(self, data_train, data_val, data_test, args):
+    def __init__(self, data_train, data_val, data_test, args, quadkey_vocab):
         self.batch_size = args.batch_size
         self.u2seq = data_train
         self.u2seq_add = data_val
         self.u2answer = data_test
         self.max_len = args.max_len
+        self.quadkey_vocab = quadkey_vocab
 
     def get_pytorch_dataloaders(self):
-        dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len)
+        dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len, self.quadkey_vocab)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
         return dataloader
 
 
 class CHLSDataset(data_utils.Dataset):
-    def __init__(self, data, max_len):
+    def __init__(self, data, max_len, quadkey_vocab, lod=17):
         self.data = data
         self.max_len = max_len
+        self.quadkey_vocab = quadkey_vocab
+        self.lod = lod
 
     def __len__(self):
         return len(self.data)
@@ -145,22 +285,52 @@ class CHLSDataset(data_utils.Dataset):
 
         data_temp = self.data[index]
         seq = data_temp[:-1]
-        seq = [[item[0], int(item[1].timestamp())] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2], item[3]] for item in seq]
         answer = [data_temp[-1][0]]
+        last_time = data_temp[-1][1]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        seq = [[0, 0]] * padding_len + seq
-        return torch.LongTensor(seq), torch.LongTensor(answer)
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
+
+        items = [x[0] for x in seq]
+        timestamps = [x[1] for x in seq]
+
+        quadkeys = []
+        for item in seq:
+            if item[2] == 0.0 and item[3] == 0.0:
+                quadkeys.append(['0'])
+            else:
+                qk = Quadkey.from_geo((item[2], item[3]), self.lod)
+                qk_str = str(qk)
+                qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+                quadkeys.append(qk_ngrams.split())
+
+        unk_index = self.quadkey_vocab['<unk>']
+        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
+                           qk in quadkeys]
+        max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        pad_index = self.quadkey_vocab['<pad>']
+        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+
+        return (torch.LongTensor(items),
+                torch.LongTensor(timestamps),
+                torch.LongTensor(quadkey_indices),
+                torch.LongTensor(answer))
 
 
 class Data_CHLS():
-    def __init__(self, data, args):
+    def __init__(self, data, args, quadkey_vocab):
         self.batch_size = args.batch_size
         self.max_len = args.max_len
         self.data = data
+        self.quadkey_vocab = quadkey_vocab
 
     def get_pytorch_dataloaders(self):
-        dataset = CHLSDataset(self.data, self.max_len)
+        dataset = CHLSDataset(self.data, self.max_len, self.quadkey_vocab)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
         return dataloader
 
@@ -175,9 +345,6 @@ def get_norm_time96(time):
 
 def get_day_norm7(time):
     # day_number = time.dayofweek
-    day_number = time.weekday() + 1
-    if time.timestamp() == 0:  # 处理时间戳 0 的情况
-        return 0
-    # 除了时间戳0，其他的时间从1开始，到7。不过归一化用的也是除以7，也就是说归一化之后最大的数字可以到达1
+    day_number = time.weekday() 
     return day_number
 

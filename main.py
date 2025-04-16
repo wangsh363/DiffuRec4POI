@@ -7,7 +7,7 @@ import numpy as np
 import logging
 import time
 import pickle
-from utils import Data_Train, Data_Val, Data_Test, Data_CHLS
+from utils import Data_Train, Data_Val, Data_Test, Data_CHLS, build_quadkey_vocab
 from model import create_model_diffu, Att_Diffuse_model
 from trainer import model_train, LSHT_inference
 from collections import Counter
@@ -18,13 +18,13 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', default='amazon_beauty', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
+parser.add_argument('--dataset', default='gowalla', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
 parser.add_argument('--log_file', default='log/', help='log dir path')
 parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')  
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPU')
-parser.add_argument('--batch_size', type=int, default=512, help='Batch Size')  
+parser.add_argument('--batch_size', type=int, default=512, help='Batch Size')  # 512
 parser.add_argument("--hidden_size", default=128, type=int, help="hidden size of model")
 parser.add_argument('--dropout', type=float, default=0.1, help='Dropout of representation')
 parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout of item embedding')
@@ -50,6 +50,12 @@ parser.add_argument('--description', type=str, default='Diffu_norm_score', help=
 parser.add_argument('--long_head', default=False, help='Long and short sequence, head and long-tail items')
 parser.add_argument('--diversity_measure', default=False, help='Measure the diversity of recommendation results')
 parser.add_argument('--epoch_time_avg', default=False, help='Calculate the average time of one epoch training')
+
+# 地理编码及自注意力所需
+parser.add_argument('--quadkey_num', type=int, default=10000, help='Number of unique Quadkeys')
+parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Quadkey')  # 四键的细节层次
+parser.add_argument('--nhead', type=int, default=4, help='Number of attention heads')
+parser.add_argument('--num_layers', type=int, default=2, help='Number of Transformer layers')
 args = parser.parse_args()
 
 print(args)
@@ -141,7 +147,7 @@ def cold_hot_long_short(data_raw, dataset_name):
 
 def main(args):    
     fix_random_seed_as(args.random_seed)
-    path_data = './datasets/data/' + args.dataset + '/dataset.pkl'
+    path_data = '../datasets/data/' + args.dataset + '/dataset.pkl'
     with open(path_data, 'rb') as f:
         data_raw = pickle.load(f)
     
@@ -152,22 +158,30 @@ def main(args):
     
     # 转换一下时间格式，字符串-->时间
     # 将时间字符串转换为 datetime 对象
+    # 获取经纬度
     for key, value in data_raw['train'].items():
-        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
+                                  poi, time_str, latitude, longitude in value]
     for key, value in data_raw['val'].items():
-        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
+                                poi, time_str, latitude, longitude in value]
     for key, value in data_raw['test'].items():
-        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
-        
-    tra_data = Data_Train(data_raw['train'], args)  # data_raw['train']是一个字典。
+        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
+                                 poi, time_str, latitude, longitude in value]
+
+    quadkey_vocab = build_quadkey_vocab(data_raw)  # 接收 Vocab 对象
+    quadkey_vocab_size = len(quadkey_vocab)  # 获取词汇表大小
+
+    # 传入词汇表
+    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab)  # data_raw['train']是一个字典。
     # 结构是(序号：交互序列，每个序列值是一个元组(物品，原始格式的时间))。  # 初始化了一个这样的数据对象
-    val_data = Data_Val(data_raw['train'], data_raw['val'], args)
-    test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args)
+    val_data = Data_Val(data_raw['train'], data_raw['val'], args, quadkey_vocab)
+    test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args, quadkey_vocab)
     tra_data_loader = tra_data.get_pytorch_dataloaders()
     val_data_loader = val_data.get_pytorch_dataloaders()
     test_data_loader = test_data.get_pytorch_dataloaders()
     diffu_rec = create_model_diffu(args)
-    rec_diffu_joint_model = Att_Diffuse_model(diffu_rec, args)
+    rec_diffu_joint_model = Att_Diffuse_model(diffu_rec, args, quadkey_vocab_size)
     
     best_model, test_results = model_train(tra_data_loader, val_data_loader, test_data_loader, rec_diffu_joint_model, args, logger)
 
