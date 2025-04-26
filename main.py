@@ -153,11 +153,11 @@ def main(args):
     # 转换一下时间格式，字符串-->时间
     # 将时间字符串转换为 datetime 对象
     for key, value in data_raw['train'].items():
-        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid) for poi, time_str, uid in value]
     for key, value in data_raw['val'].items():
-        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid) for poi, time_str, uid in value]
     for key, value in data_raw['test'].items():
-        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid) for poi, time_str, uid in value]
         
     tra_data = Data_Train(data_raw['train'], args)  # data_raw['train']是一个字典。
     # 结构是(序号：交互序列，每个序列值是一个元组(物品，原始格式的时间))。  # 初始化了一个这样的数据对象

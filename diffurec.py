@@ -329,7 +329,7 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, heads, hidden_size, dropout):
+    def __init__(self, heads, hidden_size, dropout):  # 代码里有4个头
         super().__init__()
         assert hidden_size % heads == 0
         self.size_head = hidden_size // heads
@@ -416,6 +416,9 @@ class Diffu_xstart(nn.Module):
         # 新增的全连接层，用于把物品的时间与物品的嵌入的拼接输出成物品的新嵌入
         # self.fc_item_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
 
+        # 新增的全连接层，用于把物品的时间与用户的嵌入的拼接输出成新嵌入
+        self.fc_item_uid_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
+
         # att: 注意力机制模块（Transformer_rep）
         self.att = Transformer_rep(args)
         # self.mlp_model = nn.Linear(self.hidden_size, self.hidden_size)
@@ -456,14 +459,15 @@ class Diffu_xstart(nn.Module):
         # rep_item是历史交互序列嵌入，x_t是加噪后的目标向量，t是时间步，mask_seq是序列掩码
         # (mask_seq不是位置编码，就只是一种掩码)
         emb_t = self.time_embed(self.timestep_embedding(t, self.hidden_size))  # 对时间步进行编码
-        # print(x_t.size())  # torch.Size([512, 128])
-        # print(x_t.unsqueeze(1).size())  # torch.Size([512, 1, 128])
-        # x_t = x_t + emb_t 
-                
+    
+        # 把用户向量和交互序列分开
+        rep_item, rep_uid = torch.split(rep_item, 50, dim=1)
+
+
+
         # 生成不确定性系数 lambda_uncertainty，即λ
         lambda_uncertainty = th.normal(mean=th.full(rep_item.shape, self.lambda_uncertainty), 
         std=th.full(rep_item.shape, self.lambda_uncertainty)).to(x_t.device)  ## distribution
-        # 如果要创建系数的话。miu_uncertainty是时间的不确定性系数
 
 
         # ####  Attention：把整理好的向量(z1,z2,...zn)放入tranformer中
@@ -482,10 +486,15 @@ class Diffu_xstart(nn.Module):
         time_target =(0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
 
 
+        # 将用户嵌入合并进来
+        # 用户和物品拼接后经过全连接层
+        rep_item_add_uid = torch.cat((rep_item, rep_uid), dim=2)
+        rep_item = self.fc_item_uid_out(rep_item_add_uid)
+
+
         # 原始代码
         # x_t = x_t + emb_t
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)  #  rep_diffu的大小是(512,50,128)
-
         # 将时间向量和正常的向量进行合并
         # rep_item[:, -1, :] = x_t   # 把最后一个空向量换成x_s
         x_t = x_t + emb_t
@@ -496,6 +505,8 @@ class Diffu_xstart(nn.Module):
         # rep_item_add_time = torch.cat((rep_item, time_emb_all), dim=2)
         # rep_item_afteradd = self.fc_item_out(rep_item_add_time)
         # rep_diffu = self.att(rep_item_afteradd + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)
+
+        
 
 
         # # 使用旋转操作融合向量

@@ -16,8 +16,9 @@ class TrainDataset(data_utils.Dataset):
         seq = self._getseq(index)
         labels = [seq[-1][0]]  # 标签是序列的最后一个元素(就是最后一个交互物品的序号),最后一个元素是元组，取元组的第一个
         last_time = seq[-1][1]
+        last_uid = seq[-1][2]
         tokens = seq[:-1] 
-        tokens = [[item[0], int(item[1].timestamp())] for item in tokens]
+        tokens = [[item[0], int(item[1].timestamp()), item[2]] for item in tokens]
         tokens = tokens[-self.max_len:]  # 保证 tokens 的长度不超过 max_len
         mask_len = self.max_len - len(tokens)  
         if mask_len > 0:
@@ -25,8 +26,8 @@ class TrainDataset(data_utils.Dataset):
         else:
             tokens = tokens[1:]
 
-        tokens = [[0, 0]] * mask_len + tokens + [[0, int(last_time.timestamp())]]  # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
-        # 最后一个元素是[0, 目标时间的时间戳]
+        tokens = [[0, 0, 0]] * mask_len + tokens + [[0, int(last_time.timestamp()), last_uid]]  # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
+        # tokens = [[0, 0, 0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0]]  # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
 
         return torch.LongTensor(tokens), torch.LongTensor(labels)
         # longTensor期待转入的是一个格式统一的列表[1,666,7,...]，不允许其他值存在(比如[(1,0),(1,2),1]这种是不行的)
@@ -77,14 +78,16 @@ class ValDataset(data_utils.Dataset):
         seq = self.u2seq[user]
         answer = [self.u2answer[user][0][0]]
         last_time = self.u2answer[user][0][1]
-        seq = [[item[0], int(item[1].timestamp())] for item in seq]
+        last_uid = self.u2answer[user][0][2]
+        seq = [[item[0], int(item[1].timestamp()), item[2]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0]] * padding_len + seq + [[0, int(last_time.timestamp())]]
+        seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid]]
+        # seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0]]
 
         return torch.LongTensor(seq),  torch.LongTensor(answer)
 
@@ -117,17 +120,20 @@ class TestDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user] + self.u2seq_add[user]
-        seq = [[item[0], int(item[1].timestamp())] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2]] for item in seq]
         # seq = self.u2seq[user]
         answer = [self.u2answer[user][0][0]]
         last_time = self.u2answer[user][0][1]
+        last_uid = self.u2answer[user][0][2]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0]] * padding_len + seq + [[0, int(last_time.timestamp())]]
+        seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid]]
+        # seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0]]
+
 
         # print('attention！')
         # print(len(seq), answer)
@@ -160,16 +166,18 @@ class CHLSDataset(data_utils.Dataset):
 
         data_temp = self.data[index]
         seq = data_temp[:-1]
-        seq = [[item[0], int(item[1].timestamp())] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2]] for item in seq]
         answer = [data_temp[-1][0]]
         last_time = data_temp[-1][1]
+        last_uid = data_temp[-1][2]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0]] * padding_len + seq + [[0, int(last_time.timestamp())]]
+        seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid]]
+        # seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0]]
         return torch.LongTensor(seq), torch.LongTensor(answer)
 
 

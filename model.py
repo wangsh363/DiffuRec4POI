@@ -43,6 +43,12 @@ class Att_Diffuse_model(nn.Module):
         self.loss_ce_rec = nn.CrossEntropyLoss(reduction='none')
         self.loss_mse = nn.MSELoss()
 
+        # 新增的用户id编码层
+        self.uid_embeddings = nn.Embedding(self.item_num, self.emb_dim)
+        self.uid_dropout = nn.Dropout(args.emb_dropout)
+        self.uid_LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
+
+
     def diffu_pre(self, item_rep, tag_emb, TimeStamp, mask_seq):
         seq_rep_diffu, item_rep_out, weights, t, time_target  = self.diffu(item_rep, tag_emb, TimeStamp, mask_seq)
         return seq_rep_diffu, item_rep_out, weights, t, time_target
@@ -66,14 +72,19 @@ class Att_Diffuse_model(nn.Module):
         # loss = (loss * weights).mean()
         return loss   
 
-    def loss_diffu_ce(self, rep_diffu, labels):
+    def loss_diffu_ce(self, rep_diffu, labels, time_target):
+        # # print(self.item_embeddings.weight.t().size())  # 128 9690
+        # # print(time_target.size())  # 512 128
+        # print(rep_diffu.size())  # 512 128
+        # item_emb_weight = self.item_embeddings.weight.t().T  # 转置
+        # item_emb_weight = item_emb_weight.unsqueeze(0).expand(512, -1, -1)  # 形状变为 [512, 9690, 128]
+        # time_target_expanded = time_target.unsqueeze(1)  # 将形状变为 (512, 1, 128)
+        # time_target_expanded = time_target_expanded.expand(-1, item_emb_weight.size(1), -1)  # 变为 (512, 9690, 128)
+        # tmp = self.item_embeddings.weight + time_target_expanded   # [512, 9690, 128]
+        # tmp = tmp.permute(0, 2, 1)  # [512, 128, 9690]
+        # scores = torch.matmul(rep_diffu.unsqueeze(1), tmp).squeeze(1)  # 结果为 512 × 9690
 
         scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  # 对self.item_embeddings.weight.t() 进行时间的改变
-        # print("你好")
-        # print(scores)
-        # print(scores.size())
-        # print("!!!!!!!!!!!!!!!!!!!")
-        # print(labels.squeeze(-1))
         """
         ### norm scores
         item_emb_norm = F.normalize(self.item_embeddings.weight, dim=-1)
@@ -83,8 +94,15 @@ class Att_Diffuse_model(nn.Module):
         """
         return self.loss_ce(scores, labels.squeeze(-1))  # 作用是去掉最后一个维度
 
-    def diffu_rep_pre(self, rep_diffu):
-        # 修改
+    def diffu_rep_pre(self, rep_diffu, time_target):
+        # item_emb_weight = self.item_embeddings.weight.t().T  # 转置
+        # item_emb_weight = item_emb_weight.unsqueeze(0).expand(512, -1, -1)  # 形状变为 [512, 9690, 128]
+        # time_target_expanded = time_target.unsqueeze(1)  # 将形状变为 (512, 1, 128)
+        # time_target_expanded = time_target_expanded.expand(-1, item_emb_weight.size(1), -1)  # 变为 (512, 9690, 128)
+        # tmp = self.item_embeddings.weight + time_target_expanded   # [512, 9690, 128]
+        # tmp = tmp.permute(0, 2, 1)  # [512, 128, 9690]
+        # scores = torch.matmul(rep_diffu.unsqueeze(1), tmp).squeeze(1)  # 结果为 512 × 9690
+
         scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  # 计算rep_difffu与所有物品的相似度，也就是每个物品的匹配分数
         # 计算前后两个向量的相似度得分。后面这个weight好像是可学习的参数矩阵
         return scores
@@ -120,29 +138,32 @@ class Att_Diffuse_model(nn.Module):
     # sequence是输入的序列，最后一个数据是[0, 时间]，前面的是历史交互元组(物品，时间)。tag是label标签。
     # train_flag表示是否为训练模式
     def forward(self, sequence, tag, train_flag=True): 
-        seq_length = sequence.size(1)   # 用户的历史行为序列（物品 ID 序列）
+        seq_length = sequence.size(1)   
         # position_ids = torch.arange(seq_length, dtype=torch.long, device=sequence.device)
         # position_ids = position_ids.unsqueeze(0).expand_as(sequence)
         # position_embeddings = self.position_embeddings(position_ids)
 
-        # 现在把sequence里的时间信息取出来
-        # 理想的数据是这样的：
-        # sequence的size为：torch.Size([512, 50, 2]), 也就是（batch_size，max_len, 2）
+        # sequence的size为：torch.Size([512, 50, 3]), 也就是（batch_size，max_len, 3）
         # 这个时间戳的大小应该是torch.Size([512, 50])，id的大小也是[512,50]，即（batch_size，max_len）
         last_timestamp = sequence[..., 1]  # 取最后一维的第二个值
+        uid_sequence = sequence[..., 2]  # 第三个值
         sequence = sequence[..., 0]  # 取最后一维的第一个值
 
-        # print("Max index:", sequence.max().item())  # 最大索引
-        # print("Min index:", sequence.min().item())  # 最小索引
-        # print("Embedding size:", self.item_embeddings.num_embeddings)  # 允许的最大索引
-
+        # 历史交互物品编码
         item_embeddings = self.item_embeddings(sequence)  # 将离散的整数索引映射到连续的高维空间中
         item_embeddings = self.embed_dropout(item_embeddings)  ## dropout first than layernorm
-        # item_embeddings是历史交互序列的嵌入
-
         # item_embeddings = item_embeddings + position_embeddings
         item_embeddings = self.LayerNorm(item_embeddings)  # 归一化
-        
+
+        # 用户id编码
+        uid_embeddings = self.uid_embeddings(uid_sequence) 
+        uid_embeddings = self.uid_dropout(uid_embeddings) 
+        # uid_embeddings = uid_embeddings + position_embeddings
+        uid_embeddings = self.uid_LayerNorm(uid_embeddings)  
+        # 为了传参方便，把用户id和物品id拼接在一起
+        item_embeddings = torch.cat((item_embeddings, uid_embeddings), dim=1)  # 沿着维度1（列）拼接，得到 512 × 100
+
+
         # mask_seq的大小是[512, 50]
         mask_seq = (sequence>0).float()  # 这行代码的作用是生成一个掩码（mask），
         # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。float是把布尔值转化为0和1
@@ -152,7 +173,7 @@ class Att_Diffuse_model(nn.Module):
         if train_flag:  # 如果是训练模式
             tag_emb = self.item_embeddings(tag.squeeze(-1))  ## B x H   # 这个tag就是x0
             rep_diffu, rep_item, weights, t, time_target = self.diffu_pre(item_embeddings, tag_emb, last_timestamp, mask_seq)  # 进行扩散
-            # 输入的分别是：历史交互序列的嵌入表示、tag(就是x0)、位置掩码
+            # 输入的分别是：历史交互序列的嵌入表示、tag(就是x0)、交互时间、掩码。为了方便，用户的嵌入也一并放到了item_emdeddings里
             # 输出的分别是：
             # rep_diffu：重建的x0_hat
             # rep_item:（h1,h2,...,hn）
