@@ -421,7 +421,8 @@ class Diffu_xstart(nn.Module):
 
         # att: 注意力机制模块（Transformer_rep）
         self.att = Transformer_rep(args)
-        # self.mlp_model = nn.Linear(self.hidden_size, self.hidden_size)
+        self.mlp_model = nn.Linear(self.hidden_size, self.hidden_size)
+        self.mmlp_model = nn.Sequential(nn.Linear(self.hidden_size, self.hidden_size*2), nn.ReLU(), nn.Linear(self.hidden_size*2, self.hidden_size))
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, batch_first=True)
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, num_layers=args.num_blocks, batch_first=True)
 
@@ -500,7 +501,8 @@ class Diffu_xstart(nn.Module):
         x_t = x_t + emb_t
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day  # 大小是[512, 50, 128]，rep_diffu也是[512, 50, 128]
         # 直接相加
-        rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
+        # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
+        rep_diffu = self.att(rep_item + time_emb_all , mask_seq)
         # 和物品嵌入拼接之后经过全连接层
         # rep_item_add_time = torch.cat((rep_item, time_emb_all), dim=2)
         # rep_item_afteradd = self.fc_item_out(rep_item_add_time)
@@ -548,10 +550,11 @@ class Diffu_xstart(nn.Module):
         ####
         
         ### MLP
-        # output = self.mlp_model(rep_item + lambda_uncertainty * x_t.unsqueeze(1))
-        # output = self.norm_diffu_rep(self.dropout(output))
-        # out = output[:,-1,:]
-        # rep_diffu = None
+        output = self.mlp_model(out)
+        # output = self.mmlp_model(out)
+        output = self.norm_diffu_rep(self.dropout(output))
+        out = output
+        rep_diffu = None
         ###
         
         # out = out + self.lambda_uncertainty * x_t

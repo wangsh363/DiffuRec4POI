@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 
 parser = argparse.ArgumentParser()
@@ -212,3 +212,4 @@ def main(args):
 
 if __name__ == '__main__':
     main(args)
+    print("yes")
