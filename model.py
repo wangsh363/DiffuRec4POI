@@ -50,8 +50,8 @@ class Att_Diffuse_model(nn.Module):
 
 
     def diffu_pre(self, item_rep, tag_emb, TimeStamp, mask_seq):
-        seq_rep_diffu, item_rep_out, weights, t, time_target  = self.diffu(item_rep, tag_emb, TimeStamp, mask_seq)
-        return seq_rep_diffu, item_rep_out, weights, t, time_target
+        seq_rep_diffu, item_rep_out, weights, t, time_target, condition, noise = self.diffu(item_rep, tag_emb, TimeStamp, mask_seq)
+        return seq_rep_diffu, item_rep_out, weights, t, time_target, condition, noise
 
     def reverse(self, item_rep, noise_x_t, TimeStamp, mask_seq):
         reverse_pre, time_target = self.diffu.reverse_p_sample(item_rep, noise_x_t, TimeStamp, mask_seq)
@@ -110,6 +110,9 @@ class Att_Diffuse_model(nn.Module):
     def loss_rmse(self, rep_diffu, labels):
         rep_gt = self.item_embeddings(labels).squeeze(1)
         return torch.sqrt(self.loss_mse(rep_gt, rep_diffu))
+    
+    def loss_mse1(self, rep_diffu, labels):
+        return (self.loss_mse(labels, rep_diffu))
     
     def routing_rep_pre(self, rep_diffu):
         item_norm = (self.item_embeddings.weight**2).sum(-1).view(-1, 1)  ## N x 1
@@ -172,7 +175,7 @@ class Att_Diffuse_model(nn.Module):
         
         if train_flag:  # 如果是训练模式
             tag_emb = self.item_embeddings(tag.squeeze(-1))  ## B x H   # 这个tag就是x0
-            rep_diffu, rep_item, weights, t, time_target = self.diffu_pre(item_embeddings, tag_emb, last_timestamp, mask_seq)  # 进行扩散
+            rep_diffu, rep_item, weights, t, time_target, condition, noise = self.diffu_pre(item_embeddings, tag_emb, last_timestamp, mask_seq)  # 进行扩散
             # 输入的分别是：历史交互序列的嵌入表示、tag(就是x0)、交互时间、掩码。为了方便，用户的嵌入也一并放到了item_emdeddings里
             # 输出的分别是：
             # rep_diffu：重建的x0_hat
@@ -189,13 +192,13 @@ class Att_Diffuse_model(nn.Module):
 
             noise_x_t = th.randn_like(item_embeddings[:,-1,:])
             rep_diffu, time_target = self.reverse(item_embeddings, noise_x_t, last_timestamp, mask_seq)
-            weights, t, item_rep_dis, seq_rep_dis = None, None, None, None
+            weights, t, item_rep_dis, seq_rep_dis, condition, noise = None, None, None, None, None, None
 
         # item_rep = self.model_main(item_embeddings, rep_diffu, mask_seq)
         # seq_rep = item_rep[:, -1, :]
         # scores = torch.matmul(seq_rep, self.item_embeddings.weight.t())
         scores = None
-        return scores, rep_diffu, weights, t, item_rep_dis, seq_rep_dis, time_target
+        return scores, rep_diffu, weights, t, item_rep_dis, seq_rep_dis, time_target, condition, noise
         
 
 def create_model_diffu(args):

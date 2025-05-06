@@ -62,7 +62,7 @@ def LSHT_inference(model_joint, args, data_loader):
         for test_batch in data_loader:
             test_batch = [x.to(device) for x in test_batch]
             
-            scores_rec, rep_diffu, _, _, _, _ = model_joint(test_batch[0], test_batch[1], train_flag=False)
+            scores_rec, rep_diffu, _, _, _, _, _, _, _ = model_joint(test_batch[0], test_batch[1], train_flag=False)
             scores_rec_diffu = model_joint.diffu_rep_pre(rep_diffu)
             metrics = hrs_and_ndcgs_k(scores_rec_diffu, test_batch[1], [5, 10, 20])
             for k, v in metrics.items():
@@ -108,7 +108,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             # 将每个批次中的数据（如输入和标签）移到指定的设备上，device是GPU或CPU
 
             optimizer.zero_grad()
-            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(train_batch[0], train_batch[1], train_flag=True)
+            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target, condition, noise = model_joint(train_batch[0], train_batch[1], train_flag=True)
             # 将当前批次的输入数据送入模型 `model_joint`，并获得模型输出
             # `train_batch[0]` 是输入数据，`train_batch[1]` 是目标标签（如分类标签、回归值等）
             # 训练标志 `train_flag=True` 表示这是在训练阶段
@@ -123,10 +123,12 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             # # print(time_target)
 
 
-            loss_diffu_value = model_joint.loss_diffu_ce(diffu_rep, train_batch[1], time_target)   # 目标物品本身加时间
+            loss_diffu_value = model_joint.loss_diffu_ce(condition, train_batch[1], time_target)   # 目标物品本身加时间
+            # loss_rmse = model_joint.loss_rmse(diffu_rep, train_batch[1])
+            loss_diffu_value2 = model_joint.loss_mse(diffu_rep, noise)
 
           
-            loss_all = loss_diffu_value
+            loss_all = loss_diffu_value + loss_diffu_value2
             loss_all.backward()
 
             optimizer.step()
@@ -149,7 +151,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 # metrics_dict_mean = {}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
-                    scores_rec, rep_diffu, _, _, _, _, time_target = model_joint(val_batch[0], val_batch[1], train_flag=False)
+                    scores_rec, rep_diffu, _, _, _, _, time_target, condition, noise = model_joint(val_batch[0], val_batch[1], train_flag=False)
                     scores_rec_diffu = model_joint.diffu_rep_pre(rep_diffu, time_target)    ### inner_production
                     # scores_rec_diffu = model_joint.routing_rep_pre(rep_diffu)   ### routing_rep_pre
                     # 把正确答案提取一下
@@ -191,7 +193,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         test_metrics_dict_mean = {}
         for test_batch in test_data_loader:
             test_batch = [x.to(device) for x in test_batch]
-            scores_rec, rep_diffu, _, _, _, _, time_target = best_model(test_batch[0], test_batch[1], train_flag=False)
+            scores_rec, rep_diffu, _, _, _, _, time_target, condition, noise = best_model(test_batch[0], test_batch[1], train_flag=False)
             scores_rec_diffu = best_model.diffu_rep_pre(rep_diffu,  time_target)   ### Inner Production
             # scores_rec_diffu = best_model.routing_rep_pre(rep_diffu)   ### routing
             

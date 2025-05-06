@@ -421,8 +421,8 @@ class Diffu_xstart(nn.Module):
 
         # att: 注意力机制模块（Transformer_rep）
         self.att = Transformer_rep(args)
-        self.mlp_model = nn.Linear(self.hidden_size, self.hidden_size)
-        self.mmlp_model = nn.Sequential(nn.Linear(self.hidden_size, self.hidden_size*2), nn.ReLU(), nn.Linear(self.hidden_size*2, self.hidden_size))
+        self.mlp_model = nn.Linear(self.hidden_size*3, self.hidden_size)
+        self.mmlp_model = nn.Sequential(nn.Linear(self.hidden_size*3, self.hidden_size*6), nn.ReLU(), nn.Linear(self.hidden_size*6, self.hidden_size))
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, batch_first=True)
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, num_layers=args.num_blocks, batch_first=True)
 
@@ -498,7 +498,7 @@ class Diffu_xstart(nn.Module):
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)  #  rep_diffu的大小是(512,50,128)
         # 将时间向量和正常的向量进行合并
         # rep_item[:, -1, :] = x_t   # 把最后一个空向量换成x_s
-        x_t = x_t + emb_t
+        # x_t = x_t + emb_t
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day  # 大小是[512, 50, 128]，rep_diffu也是[512, 50, 128]
         # 直接相加
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
@@ -529,6 +529,7 @@ class Diffu_xstart(nn.Module):
         
         # 用重建好的x0加上目标时间
         out = out + time_target  # size是[512, 128])
+        condition = out
 
         # 用旋转的方式
         # out = rotate(out, time_target, int(self.hidden_size / 2), x_t.device)
@@ -550,8 +551,9 @@ class Diffu_xstart(nn.Module):
         ####
         
         ### MLP
-        output = self.mlp_model(out)
-        # output = self.mmlp_model(out)
+        combined = torch.cat([x_t, condition, emb_t], dim=1)
+        # output = self.mlp_model(combined)
+        output = self.mmlp_model(combined)
         output = self.norm_diffu_rep(self.dropout(output))
         out = output
         rep_diffu = None
@@ -560,7 +562,7 @@ class Diffu_xstart(nn.Module):
         # out = out + self.lambda_uncertainty * x_t
         # time_target = None
         
-        return out, rep_diffu, item_tag, time_target
+        return out, rep_diffu, item_tag, time_target, condition
 
 
 class DiffuRec(nn.Module):
@@ -583,6 +585,8 @@ class DiffuRec(nn.Module):
         alphas = 1.0 - betas
         self.alphas_cumprod = np.cumprod(alphas, axis=0)  # 表示累积乘积，用于扩散过程中的标准化。
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])  # 前一个时间步的累积乘积，帮助计算后续时间步的变化。
+        self.coef1 = np.sqrt(1.0 / alphas)
+        self.coef2 = ((1.0 - alphas) / np.sqrt(alphas - (alphas * self.alphas_cumprod)))
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
@@ -671,33 +675,62 @@ class DiffuRec(nn.Module):
             - _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * eps
         )
 
-    def q_posterior_mean_variance(self, x_start, x_t, t):
+    # def q_posterior_mean_variance(self, x_start, x_t, t):
+    #     """
+    #     Compute the mean and variance of the diffusion posterior: 
+    #         q(x_{t-1} | x_t, x_0)
+
+    #     """
+    #     assert x_start.shape == x_t.shape
+    #     posterior_mean = (
+    #         _extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start
+    #         + _extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
+    #     )  ## \mu_t
+    #     assert (posterior_mean.shape[0] == x_start.shape[0])
+    #     return posterior_mean
+    
+    def q_posterior_mean_variance(self, epsilon, x_t, t):
         """
         Compute the mean and variance of the diffusion posterior: 
             q(x_{t-1} | x_t, x_0)
 
         """
-        assert x_start.shape == x_t.shape
+        assert epsilon.shape == x_t.shape
         posterior_mean = (
-            _extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start
-            + _extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
+            _extract_into_tensor(self.coef1, t, x_t.shape) * x_t
+            - _extract_into_tensor(self.coef2, t, x_t.shape) * epsilon
         )  ## \mu_t
-        assert (posterior_mean.shape[0] == x_start.shape[0])
+        assert (posterior_mean.shape[0] == epsilon.shape[0])
         return posterior_mean
 
+    # def p_mean_variance(self, rep_item, x_t, t, TimeStamp, mask_seq): 
+    #     # 有一个诡异的报错？这里加一个无用的参数
+    #     item_tag = None
+    #     # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
+    #     model_output, rep_diffu, item_tag, time_target, condition = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)
+        
+    #     x_0 = model_output  ##output predict
+    #     # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
+        
+    #     model_log_variance = np.log(np.append(self.posterior_variance[1], self.betas[1:]))
+    #     model_log_variance = _extract_into_tensor(model_log_variance, t, x_t.shape)
+        
+    #     model_mean = self.q_posterior_mean_variance(x_start=x_0, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
+    #     return model_mean, model_log_variance, time_target
+    
     def p_mean_variance(self, rep_item, x_t, t, TimeStamp, mask_seq): 
         # 有一个诡异的报错？这里加一个无用的参数
         item_tag = None
         # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
-        model_output, rep_diffu, item_tag, time_target = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)
+        model_output, rep_diffu, item_tag, time_target, condition = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)
         
-        x_0 = model_output  ##output predict
+        epsilon = model_output  ##output predict
         # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
         
         model_log_variance = np.log(np.append(self.posterior_variance[1], self.betas[1:]))
         model_log_variance = _extract_into_tensor(model_log_variance, t, x_t.shape)
         
-        model_mean = self.q_posterior_mean_variance(x_start=x_0, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
+        model_mean = self.q_posterior_mean_variance(epsilon=epsilon, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
         return model_mean, model_log_variance, time_target
 
     def p_sample(self, item_rep, noise_x_t, t, TimeStamp, mask_seq):  
@@ -730,11 +763,11 @@ class DiffuRec(nn.Module):
         # x_0 = self._predict_xstart_from_eps(x_t, t, eps)
 
         # 调用 xstart_model，预测目标表示 x_0 和扩散后的物品表示 item_rep_out
-        x_0, item_rep_out, item_tag, time_target = self.xstart_model(item_rep, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)  ##output predict
+        x_0, item_rep_out, item_tag, time_target, condition = self.xstart_model(item_rep, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)  ##output predict
 
         # xstart_model 是一个神经网络模块，负责从扩散后的表示 x_t 中恢复目标表示 x_0。
         # item_rep 是历史交互序列（不包括目标序列）
 
-        return x_0, item_rep_out, weights, t, time_target   # 返回预测结果x0、(h1,h2,...,hn)、权重和时间步。
+        return x_0, item_rep_out, weights, t, time_target, condition, noise   # 返回预测结果x0、(h1,h2,...,hn)、权重和时间步。
 
 
