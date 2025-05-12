@@ -7,31 +7,28 @@ import numpy as np
 import logging
 import time
 import pickle
-from utils import Data_Train, Data_Val, Data_Test, Data_CHLS, build_quadkey_vocab, build_data_vocabs
+from utils import Data_Train, Data_Val, Data_Test, Data_CHLS, build_quadkey_vocab
 from model import create_model_diffu, Att_Diffuse_model
 from trainer import model_train, LSHT_inference
 from collections import Counter
 from datetime import datetime
-
+import uuid
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', default='gowalla', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
 parser.add_argument('--log_file', default='log/', help='log dir path')
-parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')  
+parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPU')
-parser.add_argument('--batch_size', type=int, default=128, help='Batch Size')  # 512
+parser.add_argument('--batch_size', type=int, default=512, help='Batch Size')
 parser.add_argument("--hidden_size", default=128, type=int, help="hidden size of model")
 parser.add_argument('--dropout', type=float, default=0.1, help='Dropout of representation')
 parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout of item embedding')
-parser.add_argument("--hidden_act", default="gelu", type=str) # gelu relu
+parser.add_argument("--hidden_act", default="gelu", type=str)
 parser.add_argument('--num_blocks', type=int, default=4, help='Number of Transformer blocks')
-parser.add_argument('--epochs', type=int, default=500, help='Number of epochs for training')  ## 500
+parser.add_argument('--epochs', type=int, default=500, help='Number of epochs for training')
 parser.add_argument('--decay_step', type=int, default=100, help='Decay step for StepLR')
 parser.add_argument('--gamma', type=float, default=0.1, help='Gamma for StepLR')
 parser.add_argument('--metric_ks', nargs='+', type=int, default=[5, 10, 20], help='ks for Metric@k')
@@ -43,36 +40,19 @@ parser.add_argument('--momentum', type=float, default=None, help='SGD momentum')
 parser.add_argument('--schedule_sampler_name', type=str, default='lossaware', help='Diffusion for t generation')
 parser.add_argument('--diffusion_steps', type=int, default=32, help='Diffusion step')
 parser.add_argument('--lambda_uncertainty', type=float, default=0.001, help='uncertainty weight')
-parser.add_argument('--noise_schedule', default='trunc_lin', help='Beta generation')  ## cosine, linear, trunc_cos, trunc_lin, pw_lin, sqrt
+parser.add_argument('--noise_schedule', default='trunc_lin', help='Beta generation')
 parser.add_argument('--rescale_timesteps', default=True, help='rescal timesteps')
-parser.add_argument('--eval_interval', type=int, default=1, help='the number of epoch to eval')  # parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')
+parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')
 parser.add_argument('--patience', type=int, default=5, help='the number of epoch to wait before early stop')
 parser.add_argument('--description', type=str, default='Diffu_norm_score', help='Model brief introduction')
 parser.add_argument('--long_head', default=False, help='Long and short sequence, head and long-tail items')
 parser.add_argument('--diversity_measure', default=False, help='Measure the diversity of recommendation results')
 parser.add_argument('--epoch_time_avg', default=False, help='Calculate the average time of one epoch training')
-
-# 地理编码及自注意力所需
 parser.add_argument('--quadkey_num', type=int, default=10000, help='Number of unique Quadkeys')
-parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Quadkey')  # 四键的细节层次
-parser.add_argument('--nhead', type=int, default=1, help='Number of attention heads')
+parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Quadkey')
+parser.add_argument('--nhead', type=int, default=4, help='Number of attention heads')
 parser.add_argument('--num_layers', type=int, default=2, help='Number of Transformer layers')
-parser.add_argument('--top_k_tiles', type=int, default=15, help='Top K tiles for inference') # 选取K个瓦片
-parser.add_argument('--top_k_pois', type=int, default=10, help='Top K tiles for inference') # 选取K个POI,用于最终计算结果
 args = parser.parse_args()
-
-print(args)
-
-if not os.path.exists(args.log_file):
-    os.makedirs(args.log_file)
-if not os.path.exists(args.log_file + args.dataset):
-    os.makedirs(args.log_file + args.dataset )
-
-# 日志记录器
-logging.basicConfig(level=logging.INFO, filename=args.log_file + args.dataset + '/' + time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime()) + '.log',
-                    datefmt='%Y/%m/%d %H:%M:%S', format='%(asctime)s - %(name)s - %(levelname)s - %(lineno)d - %(module)s - %(message)s', filemode='w')
-logger = logging.getLogger(__name__)
-logger.info(args)
 
 
 def fix_random_seed_as(random_seed):
@@ -113,13 +93,15 @@ def cold_hot_long_short(data_raw, dataset_name):
         if item_temp[0] in hot_item:
             hot_ids.append(id_temp)
             if dataset_name == 'ml-1m':
-                hot_list.append(data_raw['train'][id_temp+1] + data_raw['val'][id_temp+1] + data_raw['test'][id_temp+1])
+                hot_list.append(
+                    data_raw['train'][id_temp + 1] + data_raw['val'][id_temp + 1] + data_raw['test'][id_temp + 1])
             else:
                 hot_list.append(data_raw['train'][id_temp] + data_raw['val'][id_temp] + data_raw['test'][id_temp])
         else:
             cold_ids.append(id_temp)
             if dataset_name == 'ml-1m':
-                cold_list.append(data_raw['train'][id_temp+1] + data_raw['val'][id_temp+1] + data_raw['test'][id_temp+1])
+                cold_list.append(
+                    data_raw['train'][id_temp + 1] + data_raw['val'][id_temp + 1] + data_raw['test'][id_temp + 1])
             else:
                 cold_list.append(data_raw['train'][id_temp] + data_raw['val'][id_temp] + data_raw['test'][id_temp])
     cold_hot_dict = {'hot': hot_list, 'cold': cold_list}
@@ -128,11 +110,11 @@ def cold_hot_long_short(data_raw, dataset_name):
     len_midshort = np.percentile(len_list, 40)
     len_midlong = np.percentile(len_list, 60)
     len_long = np.percentile(len_list, 80)
-    
+
     len_seq_dict = {'short': [], 'mid_short': [], 'mid': [], 'mid_long': [], 'long': []}
     for id_temp, len_temp in enumerate(len_list):
         if dataset_name == 'ml-1m':
-            temp_seq = data_raw['train'][id_temp+1] + data_raw['val'][id_temp+1] + data_raw['test'][id_temp+1]
+            temp_seq = data_raw['train'][id_temp + 1] + data_raw['val'][id_temp + 1] + data_raw['test'][id_temp + 1]
         else:
             temp_seq = data_raw['train'][id_temp] + data_raw['val'][id_temp] + data_raw['test'][id_temp]
         if len_temp <= len_short:
@@ -145,40 +127,40 @@ def cold_hot_long_short(data_raw, dataset_name):
             len_seq_dict['mid_long'].append(temp_seq)
         else:
             len_seq_dict['long'].append(temp_seq)
-    return cold_hot_dict, len_seq_dict, split_num, [len_short, len_midshort, len_midlong, len_long], len_list, list(item_num_count.values())
+    return cold_hot_dict, len_seq_dict, split_num, [len_short, len_midshort, len_midlong, len_long], len_list, list(
+        item_num_count.values())
 
 
-def main(args):    
+def setup_logging(dataset, log_dir):
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    if not os.path.exists(os.path.join(log_dir, dataset)):
+        os.makedirs(os.path.join(log_dir, dataset))
+
+    log_file = os.path.join(log_dir, dataset, f'{time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())}.log')
+    logging.basicConfig(
+        level=logging.INFO,
+        filename=log_file,
+        datefmt='%Y/%m/%d %H:%M:%S',
+        format='%(asctime)s - %(name)s - %(levelname)s - %(lineno)d - %(module)s - %(message)s',
+        filemode='w'
+    )
+    return logging.getLogger(__name__)
+
+
+def train_dataset(dataset, args, logger):
+    args.dataset = dataset
+    print(f"Starting training for dataset: {dataset}")
+    logger.info(f"Starting training for dataset: {dataset}")
+    logger.info(args)
+
     fix_random_seed_as(args.random_seed)
-    path_data = './datasets/data/' + args.dataset + '/dataset.pkl'
+    path_data = f'../datasets/data/{args.dataset}/dataset.pkl'
     with open(path_data, 'rb') as f:
         data_raw = pickle.load(f)
-    
-    # cold_hot_long_short(data_raw, args.dataset)
 
-    smap = data_raw.get('smap', {})
-    # 创建反向映射
-    smap_reverse = {v: k for k, v in smap.items()}
-    print(f"smap 键范围: [{min(smap.keys())}, {max(smap.keys())}], 值示例: {list(smap.values())[:5]}")
+    args = item_num_create(args, max(data_raw['smap'].values()))
 
-    # 添加 <unk> 索引
-    max_poi_id = max(smap.keys()) if smap else 0
-    unk_poi_id = max_poi_id + 1
-    smap_reverse[-1] = unk_poi_id  # 用 -1 表示未知POI
-    smap[unk_poi_id] = -1  # 反向映射
-    print(f"添加 <unk> POI ID: {unk_poi_id}")
-
-    # num数量加了一个unk，来映射未知POI
-    args = item_num_create(args, unk_poi_id + 1)
-    data_raw['smap_reverse'] = smap_reverse
-
-    # args = item_num_create(args, len(data_raw['smap']))  # 根据smap的长度确定最大编号
-    # args = item_num_create(args, max(data_raw['smap'].values()))  # 换成根据smap最大
-    # 为什么是根据值的最大来设置item数量？
-
-    # 转换一下时间格式，字符串-->时间
-    # 将时间字符串转换为 datetime 对象
-    # 获取经纬度
     for key, value in data_raw['train'].items():
         data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
                                   poi, time_str, latitude, longitude in value]
@@ -189,64 +171,66 @@ def main(args):
         data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
                                  poi, time_str, latitude, longitude in value]
 
-    # 获取词汇表和映射
-    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile = build_data_vocabs(data_raw)
-
+    quadkey_vocab = build_quadkey_vocab(data_raw)
     quadkey_vocab_size = len(quadkey_vocab)
-    tile_vocab_size = len(tile_vocab)
 
-    # 传入词汇表和映射
-    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile,
-                          smap_reverse=data_raw['smap_reverse'])
-    val_data = Data_Val(data_raw['train'], data_raw['val'], args, quadkey_vocab, tiles, tile_vocab_size,
-                        tile_to_poi, poi_to_tile, smap_reverse=data_raw['smap_reverse'])
-    test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args, quadkey_vocab, tiles,
-                          tile_vocab_size, tile_to_poi, poi_to_tile, smap_reverse=data_raw['smap_reverse'])
+    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab)
+    val_data = Data_Val(data_raw['train'], data_raw['val'], args, quadkey_vocab)
+    test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args, quadkey_vocab)
     tra_data_loader = tra_data.get_pytorch_dataloaders()
     val_data_loader = val_data.get_pytorch_dataloaders()
     test_data_loader = test_data.get_pytorch_dataloaders()
+    diffu_rec = create_model_diffu(args)
+    rec_diffu_joint_model = Att_Diffuse_model(diffu_rec, args, quadkey_vocab_size)
 
-    rec_diffu_joint_model = create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi)
-
-    best_model, test_results = model_train(tra_data_loader, val_data_loader, test_data_loader, rec_diffu_joint_model, args, logger)
+    best_model, test_results = model_train(tra_data_loader, val_data_loader, test_data_loader, rec_diffu_joint_model,
+                                           args, logger)
 
     if args.long_head:
-        cold_hot_dict, len_seq_dict, split_hotcold, split_length, list_len, list_num = cold_hot_long_short(data_raw, args.dataset)
+        cold_hot_dict, len_seq_dict, split_hotcold, split_length, list_len, list_num = cold_hot_long_short(data_raw,
+                                                                                                           args.dataset)
         cold_data = Data_CHLS(cold_hot_dict['cold'], args)
         cold_data_loader = cold_data.get_pytorch_dataloaders()
-        print('--------------Cold item-----------------------')
+        logger.info('--------------Cold item-----------------------')
         LSHT_inference(best_model, args, cold_data_loader)
 
         hot_data = Data_CHLS(cold_hot_dict['hot'], args)
         hot_data_loader = hot_data.get_pytorch_dataloaders()
-        print('--------------hot item-----------------------')
+        logger.info('--------------Hot item-----------------------')
         LSHT_inference(best_model, args, hot_data_loader)
 
         short_data = Data_CHLS(len_seq_dict['short'], args)
         short_data_loader = short_data.get_pytorch_dataloaders()
-        print('--------------Short-----------------------')
+        logger.info('--------------Short-----------------------')
         LSHT_inference(best_model, args, short_data_loader)
 
         mid_short_data = Data_CHLS(len_seq_dict['mid_short'], args)
         mid_short_data_loader = mid_short_data.get_pytorch_dataloaders()
-        print('--------------Mid_short-----------------------')
+        logger.info('--------------Mid_short-----------------------')
         LSHT_inference(best_model, args, mid_short_data_loader)
 
         mid_data = Data_CHLS(len_seq_dict['mid'], args)
         mid_data_loader = mid_data.get_pytorch_dataloaders()
-        print('--------------Mid-----------------------')
+        logger.info('--------------Mid-----------------------')
         LSHT_inference(best_model, args, mid_data_loader)
 
         mid_long_data = Data_CHLS(len_seq_dict['mid_long'], args)
         mid_long_data_loader = mid_long_data.get_pytorch_dataloaders()
-        print('--------------Mid_long-----------------------')
+        logger.info('--------------Mid_long-----------------------')
         LSHT_inference(best_model, args, mid_long_data_loader)
 
         long_data = Data_CHLS(len_seq_dict['long'], args)
         long_data_loader = long_data.get_pytorch_dataloaders()
-        print('--------------Long-----------------------')
+        logger.info('--------------Long-----------------------')
         LSHT_inference(best_model, args, long_data_loader)
-    
+
+
+def main(args):
+    datasets = ['nyc', 'tky']
+    for dataset in datasets:
+        logger = setup_logging(dataset, args.log_file)
+        train_dataset(dataset, args, logger)
+
 
 if __name__ == '__main__':
     main(args)
