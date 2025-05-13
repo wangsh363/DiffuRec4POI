@@ -147,7 +147,6 @@ def cold_hot_long_short(data_raw, dataset_name):
             len_seq_dict['long'].append(temp_seq)
     return cold_hot_dict, len_seq_dict, split_num, [len_short, len_midshort, len_midlong, len_long], len_list, list(item_num_count.values())
 
-
 def main(args):    
     fix_random_seed_as(args.random_seed)
     path_data = './datasets/data/' + args.dataset + '/dataset.pkl'

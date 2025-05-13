@@ -144,11 +144,49 @@ class PositionalEmbedding(nn.Module):
         x += pos_emb  # 将位置嵌入加到输入上
         return self.dropout(x)  # 应用Dropout
 
+
+class TilePosEnc(nn.Module):
+    def __init__(self, d_model, device='cuda'):
+        super(TilePosEnc, self).__init__()
+        self.d_model = d_model
+        self.device = device
+
+    def forward(self, tile_embeds, coords):
+        """
+        为tile嵌入添加基于POI真实经纬度的正余弦位置编码
+        参数:
+            tile_embeds: tile嵌入张量，形状 [batch_size, seq_len, d_model]
+            coords: POI的经纬度序列，形状 [batch_size, seq_len, 2]，最后一维为 [lat, lon]
+        返回:
+            添加位置编码后的tile嵌入，形状 [batch_size, seq_len, d_model]
+        """
+        batch_size, seq_len, _ = tile_embeds.shape
+        lat = coords[:, :, 0].unsqueeze(-1)  # [batch_size, seq_len, 1]
+        lon = coords[:, :, 1].unsqueeze(-1)  # [batch_size, seq_len, 1]
+
+        # 标准化经纬度到 [0, 1],这个标准化是原论文不带的
+        lat = (lat + 90) / 180  # 纬度从 [-90, 90] 映射到 [0, 1]
+        lon = (lon + 180) / 360  # 经度从 [-180, 180] 映射到 [0, 1]
+
+        div_term = torch.exp(
+            torch.arange(0, self.d_model // 2, 2, device=self.device) * (-math.log(10000.0) / (self.d_model // 2))
+        ).unsqueeze(0).unsqueeze(0)  # [1, 1, d_model//4]
+
+        pe = torch.zeros(batch_size, seq_len, self.d_model, device=self.device)
+        pe[:, :, 0:self.d_model // 2:2] = torch.sin(lat * div_term)
+        pe[:, :, 1:self.d_model // 2:2] = torch.cos(lat * div_term)
+        pe[:, :, self.d_model // 2::2] = torch.sin(lon * div_term)
+        pe[:, :, self.d_model // 2 + 1::2] = torch.cos(lon * div_term)
+
+        return tile_embeds + pe
+
 class Att_Diffuse_model(nn.Module):
     def __init__(self, diffu, args, quadkey_vocab_size, tile_vocab_size, tile_to_poi):
         super(Att_Diffuse_model, self).__init__()
         self.emb_dim = args.hidden_size
         self.item_num = args.item_num
+        self.batch_size = args.batch_size
+        self.num_gpu = args.num_gpu
         # 这是一个嵌入层。第一个参数是最大索引值，第二个参数是嵌入层维度。用来给物品id编码
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
@@ -194,6 +232,7 @@ class Att_Diffuse_model(nn.Module):
         self.loss_ce_rec = nn.CrossEntropyLoss(reduction='none')
         self.loss_mse = nn.MSELoss()
 
+        self.tile_pos_enc = TilePosEnc(self.emb_dim, device=args.device)
         # 初始化 <unk> 嵌入,避免与填充向量（全零）混淆。
         with torch.no_grad():
             self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
@@ -229,10 +268,6 @@ class Att_Diffuse_model(nn.Module):
 
         loss = torch.min(-torch.log(torch.mean(torch.sigmoid((scores_pos - scores_neg_mean).squeeze(-1)))),
                          torch.tensor(1e8))
-
-        # if isinstance(self.diffu.schedule_sampler, LossAwareSampler):
-        #     self.diffu.schedule_sampler.update_with_all_losses(t, loss.detach())
-        # loss = (loss * weights).mean()
         return loss
 
     def loss_diffu_ce(self, rep_diffu, labels):
@@ -253,7 +288,6 @@ class Att_Diffuse_model(nn.Module):
         return self.loss_ce(scores, labels.squeeze(-1))  # 作用是去掉最后一个维度
 
     def diffu_rep_pre(self, rep_diffu):
-        # 修改
         scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  # 计算rep_difffu与所有物品的相似度，也就是每个物品的匹配分数
         # 计算前后两个向量的相似度得分。后面这个weight好像是可学习的参数矩阵
         return scores
@@ -298,7 +332,7 @@ class Att_Diffuse_model(nn.Module):
 
     # sequence是输入的序列，最后一个数据是[0, 时间]，前面的是历史交互元组(物品，时间)。tag是label标签。
     # train_flag表示是否为训练模式
-    def forward(self, sequence, labels, tile_labels, train_flag=True):
+    def forward(self, sequence, labels, tile_labels, train_flag=True, coords=None):
         # seq_length = sequence.size(1)   # 用户的历史行为序列（物品 ID 序列）
         # position_ids = torch.arange(seq_length, dtype=torch.long, device=sequence.device)
         # position_ids = position_ids.unsqueeze(0).expand_as(sequence)
@@ -342,6 +376,8 @@ class Att_Diffuse_model(nn.Module):
         tile_embeds = self.tile_embeddings(tiles)
         tile_embeds = self.embed_dropout(tile_embeds)  ## dropout first than layernorm
         tile_embeds = self.LayerNorm(tile_embeds)  # 归一化
+        tile_embeds = self.tile_pos_enc(tile_embeds, coords)
+        # 问题就在如何去产生tile的位置序列,此外还需要看看位置编码层的初始化，利用经纬度的二维坐标生成后面继续判断两种类别，区分tile和pos的嵌入
 
 
         # 这个掩码需不需要修改，不是对于item使用了，对象变成了item_rep
@@ -353,16 +389,15 @@ class Att_Diffuse_model(nn.Module):
 
         if train_flag:
             labels_emb = self.item_embeddings(labels.squeeze(-1))
-            tiles_emb = self.item_embeddings(tile_labels.squeeze(-1))
-            # 分别对瓦片和POI序列进行扩散
+            tiles_emb = self.tile_embeddings(tile_labels.squeeze(-1))
             tile_rep_diffu, tile_rep_item, tile_weights, tile_t, tile_time_target = self.diffu_pre(
-                tile_embeds, labels_emb, timestamps, quadkey_embeds, mask_seq, target_type="tile"
+                tile_embeds, tiles_emb, timestamps, quadkey_embeds, mask_seq, target_type="tile"
             )
             poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target = self.diffu_pre(
-                poi_embeds, tiles_emb, timestamps, quadkey_embeds, mask_seq, target_type="poi"
+                poi_embeds, labels_emb, timestamps, quadkey_embeds, mask_seq, target_type="poi"
             )
             return None, (tile_rep_diffu, poi_rep_diffu), (tile_weights, poi_weights), (tile_t, poi_t), None, None, (
-            tile_time_target, poi_time_target)
+                tile_time_target, poi_time_target)
         else:
             # 推理模式：分别去噪
             noise_x_t_tile = th.randn_like(item_embeddings[:, -1, :])

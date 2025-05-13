@@ -10,40 +10,25 @@ from nltk import ngrams
 def calculate_boundary(data_dict):
     lons = []
     lats = []
-
-    # 遍历 train, val, test
     for split in ['train', 'val', 'test']:
         if split not in data_dict:
             continue
-        # 遍历每个用户的序列
         for seq in data_dict[split].values():
-            # 遍历序列中的每个交互记录
             for _, _, lat, lon in seq:
-                if lat != 0.0 or lon != 0.0:  # 排除无效点
+                if lat != 0.0 or lon != 0.0:
                     lons.append(lon)
                     lats.append(lat)
-
     if not lons or not lats:
-        # 如果数据为空，返回默认边界
+        print("警告: 无有效经纬度数据")
         return [-180, -90, 180, 90]
-
     min_lon, max_lon = min(lons), max(lons)
     min_lat, max_lat = min(lats), max(lats)
-
-    # 可选：添加小缓冲区以确保覆盖所有点
-    buffer = 0.01  # 经纬度缓冲区，例如 0.01 度
-    min_lon -= buffer
-    min_lat -= buffer
-    max_lon += buffer
-    max_lat += buffer
-
-    # 确保边界在有效范围内
-    min_lon = max(min_lon, -180)
-    max_lon = min(max_lon, 180)
-    min_lat = max(min_lat, -90)
-    max_lat = min(max_lat, 90)
-
-    print("当前数据集的边界为:", min_lon, max_lon, min_lat, max_lat)
+    buffer = 0.1  # 增大缓冲区
+    min_lon, max_lon = max(min_lon - buffer, -180), min(max_lon + buffer, 180)
+    min_lat, max_lat = max(min_lat - buffer, -90), min(max_lat + buffer, 90)
+    print(f"POI经度范围: [{min(lons)}, {max(lons)}]")
+    print(f"POI纬度范围: [{min(lats)}, {max(lats)}]")
+    print(f"计算的边界: [{min_lon}, {min_lat}, {max_lon}, {max_lat}]")
     return [min_lon, min_lat, max_lon, max_lat]
 
 
@@ -96,8 +81,10 @@ class QuadTree:
     def insert(self, item):
         if not self.contains(item[0], item[1]):
             return False
-        self.items.append(item)
-        self.poi_ids.add(item[2])
+        if self.children is None:
+            # 仅在叶节点添加POI
+            self.items.append(item)
+            self.poi_ids.add(item[2])
         if self.children is None and len(self.items) > self.max_items and self.depth < self.max_depth:
             self.split()
         if self.children is not None:
@@ -116,10 +103,18 @@ class QuadTree:
         ]
         for child in self.children:
             child.depth = self.depth + 1
-            child.poi_ids = set(self.poi_ids)
+        inserted_pois = set()
         for item in self.items:
+            inserted = False
             for child in self.children:
-                child.insert(item)
+                if child.insert(item):
+                    inserted_pois.add(item[2])
+                    inserted = True
+                    break
+            if not inserted:
+                print(f"POI {item[2]} 未插入到任何子节点，坐标: ({item[0]}, {item[1]})")
+        if len(inserted_pois) != len(self.poi_ids):
+            print(f"分裂时丢失POI: 原始 {len(self.poi_ids)} 个，插入 {len(inserted_pois)} 个")
         self.items = []
         self.poi_ids = set()
 
@@ -133,6 +128,7 @@ class QuadTree:
         if self.children is None:
             self.id = tile_id
             tiles.append(self)
+            # print(f"Tile {tile_id}: Boundary {self.boundary}, POI IDs {self.poi_ids}")
             return tiles, tile_id + 1
         for child in self.children:
             tiles, tile_id = child.get_leaves(tiles, tile_id)
@@ -143,18 +139,29 @@ def generate_tiles(data_dict, boundary, max_depth=5, max_items=10):
     qt = QuadTree(boundary, max_depth, max_items)
     smap_reverse = data_dict.get('smap_reverse', {})
     unmapped_pois = []
+    valid_pois = []
     for split in ['train', 'val', 'test']:
         for seq in data_dict[split].values():
             for raw_poi_id, _, lat, lon in seq:
                 if lat != 0.0 or lon != 0.0:
                     mapped_poi_id = smap_reverse.get(raw_poi_id, -1)
+                    if mapped_poi_id == -1:
+                        unmapped_pois.append((raw_poi_id, lat, lon, "无效映射"))
+                        continue
                     if not qt.insert((lon, lat, mapped_poi_id)):
-                        unmapped_pois.append((raw_poi_id, lat, lon))
+                        unmapped_pois.append((raw_poi_id, lat, lon, "超出边界"))
+                    else:
+                        valid_pois.append((lon, lat, mapped_poi_id))
                 else:
-                    unmapped_pois.append((raw_poi_id, lat, lon))
+                    unmapped_pois.append((raw_poi_id, lat, lon, "无效经纬度"))
+    print(f"有效插入的POI数量: {len(valid_pois)}")
+    print(f"未插入的POI数量: {len(unmapped_pois)}")
     if unmapped_pois:
-        print(f"未插入四叉树的 POI: {unmapped_pois[:10]}")
-    return qt.get_leaves()[0]
+        print("未插入POI示例:")
+        for poi in unmapped_pois[:10]:
+            print(f"POI: {poi[0]}, 经纬度: ({poi[1]}, {poi[2]}), 原因: {poi[3]}")
+    tiles, _ = qt.get_leaves()
+    return tiles
 
 
 def map_to_tile(tiles, lon, lat):
@@ -164,31 +171,45 @@ def map_to_tile(tiles, lon, lat):
     return -1
 
 
-def build_tile_vocab(data_dict, max_depth=8, max_items=50):
+def build_tile_vocab(data_dict, max_depth=10, max_items=500):
     boundary = calculate_boundary(data_dict)
     tiles = generate_tiles(data_dict, boundary, max_depth, max_items)
     for i, tile in enumerate(tiles, 1):
         tile.id = i
     tile_vocab = {tile.id: tile for tile in tiles}
-    tile_vocab[0] = None  # 保留 0 作为填充
+    tile_vocab[0] = None
     unk_tile_id = len(tiles) + 1
-    tile_vocab[unk_tile_id] = None  # <unk> 瓦片
+    tile_vocab[unk_tile_id] = None
     tile_to_poi = {tile.id: tile.poi_ids for tile in tiles}
     tile_to_poi[0] = set()
     tile_to_poi[unk_tile_id] = set()
 
-    # 生成 poi_to_tile 反向映射
     poi_to_tile = {}
     for tile_id, poi_ids in tile_to_poi.items():
         for poi_id in poi_ids:
             poi_to_tile[poi_id] = tile_id
-    # 将未映射的 POI 分配到 <unk> 瓦片
-    smap = data_dict.get('smap', {})
-    all_poi_ids = set(smap.values())
+
+    smap_reverse = data_dict.get('smap_reverse', {})
+    all_poi_ids = set(smap_reverse.values())
+    used_poi_ids = set()
+    for split in ['train', 'val', 'test']:
+        for seq in data_dict[split].values():
+            for raw_poi_id, _, _, _ in seq:
+                mapped_poi_id = smap_reverse.get(raw_poi_id, -1)
+                if mapped_poi_id != -1:
+                    used_poi_ids.add(mapped_poi_id)
+    print(f"总POI ID数量: {len(all_poi_ids)}")
+    print(f"实际使用的POI ID数量: {len(used_poi_ids)}")
+    unused_poi_ids = all_poi_ids - used_poi_ids
+    if unused_poi_ids:
+        print(f"未使用的POI ID数量: {len(unused_poi_ids)}, 示例: {list(unused_poi_ids)[:10]}")
+
     mapped_poi_ids = set(poi_to_tile.keys())
     missing_pois = all_poi_ids - mapped_poi_ids
     if missing_pois:
         print(f"警告: {len(missing_pois)} 个 POI ID 未映射到任何瓦片: {list(missing_pois)[:10]}")
+        if missing_pois.issubset(unused_poi_ids):
+            print("所有未映射的POI ID均为未使用的数据")
         for poi_id in missing_pois:
             poi_to_tile[poi_id] = unk_tile_id
             tile_to_poi[unk_tile_id].add(poi_id)
@@ -219,15 +240,12 @@ class TrainDataset(data_utils.Dataset):
 
     def __getitem__(self, index):
         seq = self._getseq(index)
-        raw_label = seq[-1][0]  # 原始 POI ID，例如 1001
-        label = self.smap_reverse.get(raw_label, -1)  # 1001 -> 1
+        raw_label = seq[-1][0]
+        label = self.smap_reverse.get(raw_label, -1)
         labels = [label]
-
-        # 生成 tile_label
-        unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
-        tile_label = self.poi_to_tile.get(label, unk_tile_id)  # 直接查找 POI 到瓦片的映射
+        unk_tile_id = self.tile_vocab_size - 1
+        tile_label = self.poi_to_tile.get(label, unk_tile_id)
         tile_labels = [tile_label]
-
         last_time = seq[-1][1]
         tokens = seq[:-1]
         tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3]] for item in tokens]
@@ -237,19 +255,18 @@ class TrainDataset(data_utils.Dataset):
             mask_len = mask_len - 1
         else:
             tokens = tokens[1:]
-
         tokens = [[0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0.0, 0.0]]
-
         items = [x[0] for x in tokens]
         timestamps = [x[1] for x in tokens]
-
         quadkeys = []
         tile_ids = []
+        coords = []
         for item in tokens:
             lat, lon = item[2], item[3]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
+                coords.append([0.0, 0.0])
             else:
                 qk = Quadkey.from_geo((lat, lon), self.lod)
                 qk_str = str(qk)
@@ -258,20 +275,19 @@ class TrainDataset(data_utils.Dataset):
                 tile_id = map_to_tile(self.tiles, lon, lat)
                 tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
                 tile_ids.append(tile_id)
-
+                coords.append([lat, lon])
         unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
-                           qk in quadkeys]
+        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
         max_ngram_len = max(len(indices) for indices in quadkey_indices)
         pad_index = self.quadkey_vocab['<pad>']
         quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
-
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(labels),
-                torch.LongTensor(tile_labels))
+                torch.LongTensor(tile_labels),
+                torch.FloatTensor(coords))
 
     def _getseq(self, idx):
         return self.id2seq[idx]
@@ -302,8 +318,17 @@ class Data_Train:
 
     def get_pytorch_dataloaders(self):
         dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, smap_reverse=self.smap_reverse)
-        return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True)
+        return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True, collate_fn=self.collate_fn)
 
+    def collate_fn(self, batch):
+        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        return (torch.stack(items),
+                torch.stack(timestamps),
+                torch.stack(quadkey_indices),
+                torch.stack(tile_ids),
+                torch.stack(labels),
+                torch.stack(tile_labels),
+                torch.stack(coords))
 
 class ValDataset(data_utils.Dataset):
     def __init__(self, u2seq, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, smap_reverse=None):
@@ -325,15 +350,12 @@ class ValDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user]
-        raw_answer = self.u2answer[user][0][0]  # 原始 POI ID，例如 1001
-        answer = self.smap_reverse.get(raw_answer, -1)  # 映射为连续 ID，例如 1001 -> 1
+        raw_answer = self.u2answer[user][0][0]
+        answer = self.smap_reverse.get(raw_answer, -1)
         answer = [answer]
-
-        # 生成 tile_label
-        unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
-        tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)  # 直接查找 POI 到瓦片的映射
+        unk_tile_id = self.tile_vocab_size - 1
+        tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
-
         last_time = self.u2answer[user][0][1]
         seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3]] for item in seq]
         seq = seq[-self.max_len:]
@@ -343,17 +365,17 @@ class ValDataset(data_utils.Dataset):
         else:
             seq = seq[1:]
         seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
-
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
-
         quadkeys = []
         tile_ids = []
+        coords = []
         for item in seq:
             lat, lon = item[2], item[3]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
+                coords.append([0.0, 0.0])
             else:
                 qk = Quadkey.from_geo((lat, lon), self.lod)
                 qk_str = str(qk)
@@ -362,20 +384,19 @@ class ValDataset(data_utils.Dataset):
                 tile_id = map_to_tile(self.tiles, lon, lat)
                 tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
                 tile_ids.append(tile_id)
-
+                coords.append([lat, lon])
         unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
-                           qk in quadkeys]
+        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
         max_ngram_len = max(len(indices) for indices in quadkey_indices)
         pad_index = self.quadkey_vocab['<pad>']
         quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
-
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
-                torch.LongTensor(tile_labels))
+                torch.LongTensor(tile_labels),
+                torch.FloatTensor(coords))
 
 
 class Data_Val:
@@ -393,8 +414,18 @@ class Data_Val:
 
     def get_pytorch_dataloaders(self):
         dataset = ValDataset(self.u2seq, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, smap_reverse=self.smap_reverse)
-        dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
+        dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
+
+    def collate_fn(self, batch):
+        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        return (torch.stack(items),
+                torch.stack(timestamps),
+                torch.stack(quadkey_indices),
+                torch.stack(tile_ids),
+                torch.stack(labels),
+                torch.stack(tile_labels),
+                torch.stack(coords))
 
 
 class TestDataset(data_utils.Dataset):
@@ -418,15 +449,12 @@ class TestDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user]
-        raw_answer = self.u2answer[user][0][0]  # 原始 POI ID，例如 1001
-        answer = self.smap_reverse.get(raw_answer, -1)  # 映射为连续 ID，例如 1001 -> 1
+        raw_answer = self.u2answer[user][0][0]
+        answer = self.smap_reverse.get(raw_answer, -1)
         answer = [answer]
-
-        # 生成 tile_label
-        unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
-        tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)  # 直接查找 POI 到瓦片的映射
+        unk_tile_id = self.tile_vocab_size - 1
+        tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
-
         last_time = self.u2answer[user][0][1]
         seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3]] for item in seq]
         seq = seq[-self.max_len:]
@@ -436,17 +464,17 @@ class TestDataset(data_utils.Dataset):
         else:
             seq = seq[1:]
         seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
-
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
-
         quadkeys = []
         tile_ids = []
+        coords = []
         for item in seq:
             lat, lon = item[2], item[3]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
+                coords.append([0.0, 0.0])
             else:
                 qk = Quadkey.from_geo((lat, lon), self.lod)
                 qk_str = str(qk)
@@ -455,20 +483,20 @@ class TestDataset(data_utils.Dataset):
                 tile_id = map_to_tile(self.tiles, lon, lat)
                 tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
                 tile_ids.append(tile_id)
-
+                coords.append([lat, lon])
         unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
-                           qk in quadkeys]
+        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk]
+                           for qk in quadkeys]
         max_ngram_len = max(len(indices) for indices in quadkey_indices)
         pad_index = self.quadkey_vocab['<pad>']
         quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
-
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
-                torch.LongTensor(tile_labels))
+                torch.LongTensor(tile_labels),
+                torch.FloatTensor(coords))
 
 
 class Data_Test:
@@ -487,8 +515,18 @@ class Data_Test:
 
     def get_pytorch_dataloaders(self):
         dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, smap_reverse=self.smap_reverse)
-        dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
+        dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
+
+    def collate_fn(self, batch):
+        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        return (torch.stack(items),
+                torch.stack(timestamps),
+                torch.stack(quadkey_indices),
+                torch.stack(tile_ids),
+                torch.stack(labels),
+                torch.stack(tile_labels),
+                torch.stack(coords))
 
 
 class CHLSDataset(data_utils.Dataset):
@@ -533,11 +571,13 @@ class CHLSDataset(data_utils.Dataset):
 
         quadkeys = []
         tile_ids = []
+        coords = []
         for item in seq:
             lat, lon = item[2], item[3]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
+                coords.append([0.0, 0.0])
             else:
                 qk = Quadkey.from_geo((lat, lon), self.lod)
                 qk_str = str(qk)
@@ -546,6 +586,7 @@ class CHLSDataset(data_utils.Dataset):
                 tile_id = map_to_tile(self.tiles, lon, lat)
                 tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
                 tile_ids.append(tile_id)
+                coords.append([lat, lon])
 
         unk_index = self.quadkey_vocab['<unk>']
         quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for
@@ -559,7 +600,8 @@ class CHLSDataset(data_utils.Dataset):
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
-                torch.LongTensor(tile_labels))
+                torch.LongTensor(tile_labels),
+                torch.LongTensor(coords))
 
 
 class Data_CHLS:
@@ -576,8 +618,18 @@ class Data_CHLS:
 
     def get_pytorch_dataloaders(self):
         dataset = CHLSDataset(self.data, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, smap_reverse=self.smap_reverse)
-        dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
+        dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True,collate_fn=self.collate_fn)
         return dataloader
+
+    def collate_fn(self, batch):
+        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        return (torch.stack(items),
+                torch.stack(timestamps),
+                torch.stack(quadkey_indices),
+                torch.stack(tile_ids),
+                torch.stack(labels),
+                torch.stack(tile_labels),
+                torch.stack(coords))
 
 
 def get_norm_time96(time):

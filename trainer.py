@@ -87,7 +87,7 @@ def LSHT_inference(model_joint, args, data_loader):
     with torch.no_grad():
         test_metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
         test_metrics_dict_mean = {}
-        for test.identifier in data_loader:
+        for test_batch in data_loader:
             test_batch = [x.to(device) for x in test_batch]
 
             # 解包输入数据，包括 tile_label
@@ -126,26 +126,21 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         model_joint = nn.DataParallel(model_joint)
     optimizer = optimizers(model_joint, args)
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=args.gamma)
-    best_metrics_dict = {'Best_HR@5': 0, 'Best_NDCG@5': 0, 'Best_HR@10': 0, 'Best_NDCG@10': 0, 'Best_HR@20': 0,
-                         'Best_NDCG@20': 0}
-    best_epoch = {'Best_epoch_HR@5': 0, 'Best_epoch_NDCG@5': 0, 'Best_epoch_HR@10': 0, 'Best_epoch_NDCG@10': 0,
-                  'Best_epoch_HR@20': 0, 'Best_epoch_NDCG@20': 0}
+    best_metrics_dict = {'Best_HR@5': 0, 'Best_NDCG@5': 0, 'Best_HR@10': 0, 'Best_NDCG@10': 0, 'Best_HR@20': 0, 'Best_NDCG@20': 0}
+    best_epoch = {'Best_epoch_HR@5': 0, 'Best_epoch_NDCG@5': 0, 'Best_epoch_HR@10': 0, 'Best_epoch_NDCG@10': 0, 'Best_epoch_HR@20': 0, 'Best_epoch_NDCG@20': 0}
     bad_count = 0
-    unk_poi_id = args.item_num - 1  # <unk> POI ID
+    unk_poi_id = args.item_num - 1
     unk_tile_id = args.tile_vocab_size - 1 if hasattr(args, 'tile_vocab_size') else model_joint.tile_vocab_size - 1
 
     for epoch_temp in range(epochs):
         print('Epoch: {}'.format(epoch_temp))
         logger.info('Epoch: {}'.format(epoch_temp))
         model_joint.train()
-
         flag_update = 0
         for index_temp, train_batch in enumerate(tra_data_loader):
             train_batch = [x.to(device) for x in train_batch]
-            items, timestamps, quadkeys, tiles, labels, tile_labels = train_batch
+            items, timestamps, quadkeys, tiles, labels, tile_labels, coords = train_batch
             sequence = (items, timestamps, quadkeys, tiles)
-
-            # 验证 POI 和瓦片标签
             if labels.max().item() >= args.item_num or labels.min().item() < 0:
                 print(f"警告: 无效 POI labels 检测到，min={labels.min().item()}, max={labels.max().item()}, item_num={args.item_num}")
                 labels = torch.where(labels == -1, unk_poi_id, labels)
@@ -155,34 +150,28 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             if tile_labels.max().item() >= model_joint.tile_vocab_size or tile_labels.min().item() < 0:
                 print(f"警告: 无效 tile_labels 检测到，min={tile_labels.min().item()}, max={tile_labels.max().item()}, tile_vocab_size={model_joint.tile_vocab_size}")
                 tile_labels = torch.where(tile_labels == -1, unk_tile_id, tile_labels)
-                if tile_labels.max().item() >= model_joint.tile_vocab_size:
+                if tile_labels.max().item() >= model_joint.tileVocab_size:
                     print(f"错误: 瓦片标签仍然无效，max={tile_labels.max().item()}")
                     tile_labels = torch.clamp(tile_labels, 0, unk_tile_id)
             if items.max().item() >= args.item_num or items.min().item() < 0:
                 print(f"警告: 无效 items 检测到，min={items.min().item()}, max={items.max().item()}, item_num={args.item_num}")
                 items = torch.clamp(items, 0, unk_poi_id)
-
             optimizer.zero_grad()
-            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True)
+            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=coords)
             tile_rep_diffu, poi_rep_diffu = diffu_rep
             tile_weights, poi_weights = weights
             tile_t, poi_t = t
             tile_time_target, poi_time_target = time_target
-
-            # 计算损失
             loss_diffu_tile = model_joint.loss_arcface(tile_rep_diffu, tile_labels, target_type="tile")
             loss_diffu_poi = model_joint.loss_arcface(poi_rep_diffu, labels, target_type="poi")
             loss_all = 4 * loss_diffu_tile + loss_diffu_poi
             loss_all.backward()
-
             optimizer.step()
-
             if index_temp % int(len(tra_data_loader) / 5 + 1) == 0:
                 print('[%d/%d] Loss: %.4f' % (index_temp, len(tra_data_loader), loss_all.item()))
                 logger.info('[%d/%d] Loss: %.4f' % (index_temp, len(tra_data_loader), loss_all.item()))
         print("loss in epoch {}: {}".format(epoch_temp, loss_all.item()))
         lr_scheduler.step()
-
         if epoch_temp != 0 and epoch_temp % args.eval_interval == 0:
             print('start predicting: ', datetime.datetime.now())
             logger.info('start predicting: {}'.format(datetime.datetime.now()))
@@ -191,10 +180,9 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
-                    items, timestamps, quadkeys, tiles, labels, tile_labels = val_batch
+                    items, timestamps, quadkeys, tiles, labels, tile_labels, coords = val_batch
                     sequence = (items, timestamps, quadkeys, tiles)
-
-                    top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = model_joint(sequence, labels, tile_labels, train_flag=False)
+                    top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = model_joint(sequence, labels, tile_labels, train_flag=False, coords=coords)
                     valid_mask = labels.squeeze(-1) != unk_poi_id
                     if not valid_mask.all():
                         print(f"警告: 验证集中包含 {valid_mask.size(0) - valid_mask.sum().item()} 个 <unk> 标签")
@@ -204,7 +192,6 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                         metrics = hrs_and_ndcgs_k_from_indices(top_k_pois, labels, metric_ks)
                         for k, v in metrics.items():
                             metrics_dict[k].append(v)
-
             for key_temp, values_temp in metrics_dict.items():
                 values_mean = round(np.mean(values_temp) * 100, 4)
                 if values_mean > best_metrics_dict['Best_' + key_temp]:
@@ -212,7 +199,6 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     bad_count = 0
                     best_metrics_dict['Best_' + key_temp] = values_mean
                     best_epoch['Best_epoch_' + key_temp] = epoch_temp
-
             if flag_update == 0:
                 bad_count += 1
             else:
@@ -223,24 +209,19 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 best_model = copy.deepcopy(model_joint)
             if bad_count >= args.patience:
                 break
-
     logger.info(best_metrics_dict)
     logger.info(best_epoch)
-
     if args.eval_interval > epochs:
         best_model = copy.deepcopy(model_joint)
-
     top_100_item = []
     with torch.no_grad():
         test_metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
         test_metrics_dict_mean = {}
         for test_batch in test_data_loader:
             test_batch = [x.to(device) for x in test_batch]
-            items, timestamps, quadkeys, tiles, labels, tile_labels = test_batch
+            items, timestamps, quadkeys, tiles, labels, tile_labels, coords = test_batch
             sequence = (items, timestamps, quadkeys, tiles)
-
-            top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = best_model(sequence, labels, tile_labels, train_flag=False)
-
+            top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = best_model(sequence, labels, tile_labels, train_flag=False, coords=coords)
             valid_mask = labels.squeeze(-1) != unk_poi_id
             if not valid_mask.all():
                 print(f"警告: 测试集中包含 {valid_mask.size(0) - valid_mask.sum().item()} 个 <unk> 标签")
@@ -252,37 +233,34 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 metrics = hrs_and_ndcgs_k_from_indices(top_k_pois, labels, metric_ks)
                 for k, v in metrics.items():
                     test_metrics_dict[k].append(v)
-
-    for key_temp, values_temp in test_metrics_dict.items():
-        values_mean = round(np.mean(values_temp) * 100, 4)
-        test_metrics_dict_mean[key_temp] = values_mean
-    print('Test------------------------------------------------------')
-    logger.info('Test------------------------------------------------------')
-    print(test_metrics_dict_mean)
-    logger.info(test_metrics_dict_mean)
-    print('Best Eval---------------------------------------------------------')
-    logger.info('Best Eval---------------------------------------------------------')
-    print(best_metrics_dict)
-    print(best_epoch)
-    logger.info(best_metrics_dict)
-    logger.info(best_epoch)
-
-    print(args)
-
-    if args.diversity_measure:
-        path_data = '../datasets/data/category/' + args.dataset + '/id_category_dict.pkl'
-        with open(path_data, 'rb') as f:
-            id_category_dict = pickle.load(f)
-        id_top_100 = torch.cat(top_100_item, dim=0).tolist()
-        category_list_100 = []
-        for id_top_100_temp in id_top_100:
-            category_temp_list = []
-            for id_temp in id_top_100_temp:
-                if id_temp != unk_poi_id:  # 忽略 <unk> POI
-                    category_temp_list.append(id_category_dict[id_temp])
-            category_list_100.append(category_temp_list)
-        path_data_category = '../datasets/data/category/' + args.dataset + '/DiffuRec_top100_category.pkl'
-        with open(path_data_category, 'wb') as f:
-            pickle.dump(category_list_100, f)
+        for key_temp, values_temp in test_metrics_dict.items():
+            values_mean = round(np.mean(values_temp) * 100, 4)
+            test_metrics_dict_mean[key_temp] = values_mean
+        print('Test------------------------------------------------------')
+        logger.info('Test------------------------------------------------------')
+        print(test_metrics_dict_mean)
+        logger.info(test_metrics_dict_mean)
+        print('Best Eval---------------------------------------------------------')
+        logger.info('Best Eval---------------------------------------------------------')
+        print(best_metrics_dict)
+        print(best_epoch)
+        logger.info(best_metrics_dict)
+        logger.info(best_epoch)
+        print(args)
+        if args.diversity_measure:
+            path_data = '../datasets/data/category/' + args.dataset + '/id_category_dict.pkl'
+            with open(path_data, 'rb') as f:
+                id_category_dict = pickle.load(f)
+            id_top_100 = torch.cat(top_100_item, dim=0).tolist()
+            category_list_100 = []
+            for id_top_100_temp in id_top_100:
+                category_temp_list = []
+                for id_temp in id_top_100_temp:
+                    if id_temp != unk_poi_id:
+                        category_temp_list.append(id_category_dict[id_temp])
+                category_list_100.append(category_temp_list)
+            path_data_category = '../datasets/data/category/' + args.dataset + '/DiffuRec_top100_category.pkl'
+            with open(path_data_category, 'wb') as f:
+                pickle.dump(category_list_100, f)
 
     return best_model, test_metrics_dict_mean
