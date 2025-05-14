@@ -187,11 +187,12 @@ class Att_Diffuse_model(nn.Module):
         self.item_num = args.item_num
         self.batch_size = args.batch_size
         self.num_gpu = args.num_gpu
+        self.user_num = args.user_num
         # 这是一个嵌入层。第一个参数是最大索引值，第二个参数是嵌入层维度。用来给物品id编码
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
         self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
-
+        self.user_embeddings = nn.Embedding(self.user_num, self.emb_dim)
         # quadkey嵌入
         self.quadkey_embeddings = nn.Embedding(quadkey_vocab_size, self.emb_dim)
         self.tile_embeddings = nn.Embedding(tile_vocab_size, self.emb_dim, padding_idx=0)
@@ -238,23 +239,23 @@ class Att_Diffuse_model(nn.Module):
             self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
             self.tile_embeddings.weight[tile_vocab_size - 1].normal_(mean=0, std=0.1)  # <unk> 瓦片嵌入
 
-    def diffu_pre(self, rep, tag_emb, timestamps, quadkey_rep, mask_seq, target_type="poi"):
+    def diffu_pre(self, rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq, target_type="poi"):
         if target_type == "tile":
             diffu_model = self.diffu_tile
         else:
             diffu_model = self.diffu_poi
         seq_rep_diffu, item_rep_out, weights, t, time_target = diffu_model(
-            rep, tag_emb, timestamps, quadkey_rep, mask_seq
+            rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq
         )
         return seq_rep_diffu, item_rep_out, weights, t, time_target
 
-    def reverse(self, rep, noise_x_t, timestamps, quadkey_rep, mask_seq, target_type="poi"):
+    def reverse(self, rep, noise_x_t, timestamps, user_embeds, quadkey_rep, mask_seq, target_type="poi"):
         if target_type == "tile":
             diffu_model = self.diffu_tile
         else:
             diffu_model = self.diffu_poi
         reverse_pre, time_target = diffu_model.reverse_p_sample(
-            rep, noise_x_t, timestamps, quadkey_rep, mask_seq
+            rep, noise_x_t, timestamps, user_embeds, quadkey_rep, mask_seq
         )
         return reverse_pre, time_target
 
@@ -338,7 +339,7 @@ class Att_Diffuse_model(nn.Module):
         # position_ids = position_ids.unsqueeze(0).expand_as(sequence)
         # position_embeddings = self.position_embeddings(position_ids)
 
-        items, timestamps, quadkeys, tiles = sequence
+        items, timestamps, uids, quadkeys, tiles = sequence
         unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
         unk_poi_id = self.item_num - 1  # <unk> POI ID
 
@@ -372,6 +373,10 @@ class Att_Diffuse_model(nn.Module):
         quadkey_embeds = quadkey_embeds.view(item_embeddings_origin.size(0), item_embeddings_origin.size(1), quadkey_embeds.size(1))  # 重塑为 [batch_size, seq_len, emb_dim]
 
         poi_embeds = item_embeddings
+        # 用户序列嵌入和编码
+        user_embeds = self.user_embeddings(uids)
+        user_embeds = self.embed_dropout(user_embeds)  ## dropout first than layernorm
+        user_embeds = self.LayerNorm(user_embeds)  # 归一化
         # 瓦片序列嵌入和编码
         tile_embeds = self.tile_embeddings(tiles)
         tile_embeds = self.embed_dropout(tile_embeds)  ## dropout first than layernorm
@@ -391,10 +396,10 @@ class Att_Diffuse_model(nn.Module):
             labels_emb = self.item_embeddings(labels.squeeze(-1))
             tiles_emb = self.tile_embeddings(tile_labels.squeeze(-1))
             tile_rep_diffu, tile_rep_item, tile_weights, tile_t, tile_time_target = self.diffu_pre(
-                tile_embeds, tiles_emb, timestamps, quadkey_embeds, mask_seq, target_type="tile"
+                tile_embeds, tiles_emb, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="tile"
             )
             poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target = self.diffu_pre(
-                poi_embeds, labels_emb, timestamps, quadkey_embeds, mask_seq, target_type="poi"
+                poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="poi"
             )
             return None, (tile_rep_diffu, poi_rep_diffu), (tile_weights, poi_weights), (tile_t, poi_t), None, None, (
                 tile_time_target, poi_time_target)
@@ -404,10 +409,10 @@ class Att_Diffuse_model(nn.Module):
             noise_x_t_poi = th.randn_like(item_embeddings[:, -1, :])
             ######### 这个噪声是一样的吗，需不需要修改
             tile_rep_diffu, tile_time_target = self.reverse(
-                tile_embeds, noise_x_t_tile, timestamps, quadkey_embeds, mask_seq, target_type="tile"
+                tile_embeds, noise_x_t_tile, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="tile"
             )
             poi_rep_diffu, poi_time_target = self.reverse(
-                poi_embeds, noise_x_t_poi, timestamps, quadkey_embeds, mask_seq, target_type="poi"
+                poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="poi"
             )
 
             # 瓦片排序：生成Tile Ranking List

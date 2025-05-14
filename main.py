@@ -171,6 +171,14 @@ def main(args):
     args = item_num_create(args, unk_poi_id + 1)
     data_raw['smap_reverse'] = smap_reverse
 
+    # 计算用户数量
+    user_ids = set()
+    for split in ['train', 'val', 'test']:
+        for user_id in data_raw[split].keys():
+            user_ids.add(user_id)
+    args.user_num = len(user_ids) + 1  # 加1以包含可能的<unk>用户ID
+    print(f"用户数量: {args.user_num}")
+
     # args = item_num_create(args, len(data_raw['smap']))  # 根据smap的长度确定最大编号
     # args = item_num_create(args, max(data_raw['smap'].values()))  # 换成根据smap最大
     # 为什么是根据值的最大来设置item数量？
@@ -179,14 +187,14 @@ def main(args):
     # 将时间字符串转换为 datetime 对象
     # 获取经纬度
     for key, value in data_raw['train'].items():
-        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
-                                  poi, time_str, latitude, longitude in value]
+        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+                                  poi, time_str, uid, latitude, longitude in value]
     for key, value in data_raw['val'].items():
-        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
-                                poi, time_str, latitude, longitude in value]
+        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+                                poi, time_str, uid, latitude, longitude in value]
     for key, value in data_raw['test'].items():
-        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), latitude, longitude) for
-                                 poi, time_str, latitude, longitude in value]
+        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+                                 poi, time_str, uid, latitude, longitude in value]
 
     # 获取词汇表和映射
     quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile = build_data_vocabs(data_raw)

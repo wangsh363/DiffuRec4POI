@@ -4,7 +4,7 @@ from datetime import datetime
 
 # 加载 CSV 文件
 path = 'CA_train.csv'  # 替换为实际路径
-df = pd.read_csv(path, usecols=['trajectory_id', 'POI_id', 'local_time', 'latitude', 'longitude'])
+df = pd.read_csv(path, usecols=['trajectory_id', 'POI_id', 'local_time', 'user_id', 'latitude', 'longitude'])
 
 # 创建用户-物品交互字典并收集 raw_poi_id
 user_item_dict = {}
@@ -13,9 +13,10 @@ for _, row in df.iterrows():
     user_id = int(row['trajectory_id'])
     item_id = int(row['POI_id'])
     timestamp = row['local_time']
+    uid = int(row['user_id'])
     latitude = float(row['latitude'])
     longitude = float(row['longitude'])
-    entry = (item_id, timestamp, latitude, longitude)
+    entry = (item_id, timestamp, uid, latitude, longitude)
     if user_id not in user_item_dict:
         user_item_dict[user_id] = [entry]
     else:
@@ -28,7 +29,7 @@ user_item_dict = {user_id: value for user_id, value in user_item_dict.items() if
 # 更新 raw_poi_id 集合，仅包含过滤后数据中的 POI
 filtered_raw_poi_ids = set()
 for seq in user_item_dict.values():
-    for item_id, _, _, _ in seq:
+    for item_id, _, _, _, _ in seq:
         filtered_raw_poi_ids.add(item_id)
 print(f"过滤后 raw_poi_id 数量: {len(filtered_raw_poi_ids)}")
 

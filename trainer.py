@@ -91,12 +91,11 @@ def LSHT_inference(model_joint, args, data_loader):
             test_batch = [x.to(device) for x in test_batch]
 
             # 解包输入数据，包括 tile_label
-            items, timestamps, quadkeys, tiles, labels, tile_labels = test_batch
-            sequence = (items, timestamps, quadkeys, tiles)
+            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = test_batch
+            sequence = (items, timestamps, uids, quadkeys, tiles)
 
             # 推理模式：获取Top K瓦片和Top K POI
-            top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = model_joint(sequence, labels,
-                                                                                       train_flag=False)
+            top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = model_joint(sequence, labels, tile_labels, train_flag=False, coords=coords)
 
             # top_k_pois 已经是Top K的POI推荐列表，直接用于评估
             valid_mask = labels.squeeze(-1) != unk_poi_id
@@ -139,8 +138,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         flag_update = 0
         for index_temp, train_batch in enumerate(tra_data_loader):
             train_batch = [x.to(device) for x in train_batch]
-            items, timestamps, quadkeys, tiles, labels, tile_labels, coords = train_batch
-            sequence = (items, timestamps, quadkeys, tiles)
+            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = train_batch
+            sequence = (items, timestamps, uids, quadkeys, tiles)
             if labels.max().item() >= args.item_num or labels.min().item() < 0:
                 print(f"警告: 无效 POI labels 检测到，min={labels.min().item()}, max={labels.max().item()}, item_num={args.item_num}")
                 labels = torch.where(labels == -1, unk_poi_id, labels)
@@ -180,8 +179,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
-                    items, timestamps, quadkeys, tiles, labels, tile_labels, coords = val_batch
-                    sequence = (items, timestamps, quadkeys, tiles)
+                    items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = val_batch
+                    sequence = (items, timestamps, uids, quadkeys, tiles)
                     top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = model_joint(sequence, labels, tile_labels, train_flag=False, coords=coords)
                     valid_mask = labels.squeeze(-1) != unk_poi_id
                     if not valid_mask.all():
@@ -219,8 +218,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         test_metrics_dict_mean = {}
         for test_batch in test_data_loader:
             test_batch = [x.to(device) for x in test_batch]
-            items, timestamps, quadkeys, tiles, labels, tile_labels, coords = test_batch
-            sequence = (items, timestamps, quadkeys, tiles)
+            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = test_batch
+            sequence = (items, timestamps, uids, quadkeys, tiles)
             top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = best_model(sequence, labels, tile_labels, train_flag=False, coords=coords)
             valid_mask = labels.squeeze(-1) != unk_poi_id
             if not valid_mask.all():

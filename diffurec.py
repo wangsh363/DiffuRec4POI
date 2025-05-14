@@ -431,7 +431,7 @@ class Diffu_xstart(nn.Module):
             embedding = th.cat([embedding, th.zeros_like(embedding[:, :1])], dim=-1)
         return embedding
 
-    def forward(self, rep, x_t, t, TimeStamp, quadkey_rep, mask_seq, item_tag):
+    def forward(self, rep, x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq, item_tag):
         emb_t = self.time_embed(self.timestep_embedding(t, self.hidden_size))
         lambda_uncertainty = th.normal(mean=th.full(rep.shape, self.lambda_uncertainty),
                                        std=th.full(rep.shape, self.lambda_uncertainty)).to(x_t.device)
@@ -452,13 +452,14 @@ class Diffu_xstart(nn.Module):
         # 根据target_type选择是否使用quadkey_rep
         if self.target_type == "poi":
             # 对于POI，保留原有逻辑，融合quadkey_rep
-            rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1) + quadkey_rep, mask_seq)
+            rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1) + quadkey_rep + user_embeds + time_emb_all, mask_seq)
         else:
             # 对于tile，跳过quadkey_rep，仅使用rep和x_t
-            rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)
+            rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1) + user_embeds + time_emb_all, mask_seq)
 
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
         out = rep_diffu[:, -2, :]
+        out = out + time_target
 
         return out, rep_diffu, item_tag, time_target
 
@@ -585,12 +586,12 @@ class DiffuRec(nn.Module):
         assert (posterior_mean.shape[0] == x_start.shape[0])
         return posterior_mean
 
-    def p_mean_variance(self, rep_item, x_t, t, TimeStamp, quadkey_rep, mask_seq):
+    def p_mean_variance(self, rep_item, x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq):
         # 有一个诡异的报错？这里加一个无用的参数
         item_tag = None
         # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
         model_output, rep_diffu, item_tag, time_target = self.xstart_model(rep_item, x_t, self._scale_timesteps(t),
-                                                                           TimeStamp, quadkey_rep, mask_seq, item_tag)
+                                                                           TimeStamp, user_embeds, quadkey_rep, mask_seq, item_tag)
 
         x_0 = model_output  ##output predict
         # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
@@ -602,26 +603,26 @@ class DiffuRec(nn.Module):
                                                     t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
         return model_mean, model_log_variance, time_target
 
-    def p_sample(self, item_rep, noise_x_t, t, TimeStamp, quadkey_rep, mask_seq):
+    def p_sample(self, item_rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq):
         # 给定当前时间步的噪声数据 x_t，生成去噪后的数据 x_(t-1)。通过采样，逐步将噪声数据恢复到原始数据。
-        model_mean, model_log_variance, time_target = self.p_mean_variance(item_rep, noise_x_t, t, TimeStamp, quadkey_rep, mask_seq)
+        model_mean, model_log_variance, time_target = self.p_mean_variance(item_rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq)
         noise = th.randn_like(noise_x_t)
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(noise_x_t.shape) - 1))))  # no noise when t == 0
         sample_xt = model_mean + nonzero_mask * th.exp(
             0.5 * model_log_variance) * noise  ## sample x_{t-1} from the \mu(x_{t-1}) distribution based on the reparameter trick
         return sample_xt, time_target
 
-    def reverse_p_sample(self, rep, noise_x_t, TimeStamp, quadkey_rep, mask_seq):  # 通过迭代从时间步 T 到 0，逐步去噪，最终得到没有噪声的原始数据。
+    def reverse_p_sample(self, rep, noise_x_t, TimeStamp, user_embeds, quadkey_rep, mask_seq):  # 通过迭代从时间步 T 到 0，逐步去噪，最终得到没有噪声的原始数据。
         device = next(self.xstart_model.parameters()).device
         indices = list(range(self.num_timesteps))[::-1]
 
         for i in indices:  # from T to 0, reversion iteration
             t = th.tensor([i] * rep.shape[0], device=device)
             with th.no_grad():
-                noise_x_t, time_target = self.p_sample(rep, noise_x_t, t, TimeStamp, quadkey_rep, mask_seq)
+                noise_x_t, time_target = self.p_sample(rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq)
         return noise_x_t, time_target
 
-    def forward(self, rep, item_tag, TimeStamp, quadkey_rep, mask_seq):
+    def forward(self, rep, item_tag, TimeStamp, user_embeds, quadkey_rep, mask_seq):
         noise = th.randn_like(item_tag)  # 和初始物品嵌入形状一致的随机噪声
         # 使用 schedule_sampler 采样时间步 t 和对应的权重 weights。
         t, weights = self.schedule_sampler.sample(rep.shape[0],
@@ -634,7 +635,7 @@ class DiffuRec(nn.Module):
         # x_0 = self._predict_xstart_from_eps(x_t, t, eps)
 
         # 调用 xstart_model，预测目标表示 x_0 和扩散后的物品表示 item_rep_out
-        x_0, item_rep_out, item_tag, time_target = self.xstart_model(rep, x_t, self._scale_timesteps(t), TimeStamp, quadkey_rep,
+        x_0, item_rep_out, item_tag, time_target = self.xstart_model(rep, x_t, self._scale_timesteps(t), TimeStamp, user_embeds, quadkey_rep,
                                                                      mask_seq, item_tag)  ##output predict
 
         # xstart_model 是一个神经网络模块，负责从扩散后的表示 x_t 中恢复目标表示 x_0。

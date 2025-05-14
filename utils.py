@@ -14,7 +14,7 @@ def calculate_boundary(data_dict):
         if split not in data_dict:
             continue
         for seq in data_dict[split].values():
-            for _, _, lat, lon in seq:
+            for _, _, _, lat, lon in seq:
                 if lat != 0.0 or lon != 0.0:
                     lons.append(lon)
                     lats.append(lat)
@@ -50,7 +50,7 @@ def build_quadkey_vocab(data_dict, lod=17):
     all_quadkeys = []
     for split in ['train', 'val', 'test']:
         for seq in data_dict[split].values():
-            for _, _, lat, lon in seq:
+            for _, _, _, lat, lon in seq:
                 if lat != 0.0 or lon != 0.0:
                     qk = Quadkey.from_geo((lat, lon), lod)
                     qk_str = str(qk)
@@ -142,7 +142,7 @@ def generate_tiles(data_dict, boundary, max_depth=5, max_items=10):
     valid_pois = []
     for split in ['train', 'val', 'test']:
         for seq in data_dict[split].values():
-            for raw_poi_id, _, lat, lon in seq:
+            for raw_poi_id, _, _, lat, lon in seq:
                 if lat != 0.0 or lon != 0.0:
                     mapped_poi_id = smap_reverse.get(raw_poi_id, -1)
                     if mapped_poi_id == -1:
@@ -171,7 +171,7 @@ def map_to_tile(tiles, lon, lat):
     return -1
 
 
-def build_tile_vocab(data_dict, max_depth=10, max_items=500):
+def build_tile_vocab(data_dict, max_depth=10, max_items=50):
     boundary = calculate_boundary(data_dict)
     tiles = generate_tiles(data_dict, boundary, max_depth, max_items)
     for i, tile in enumerate(tiles, 1):
@@ -194,7 +194,7 @@ def build_tile_vocab(data_dict, max_depth=10, max_items=500):
     used_poi_ids = set()
     for split in ['train', 'val', 'test']:
         for seq in data_dict[split].values():
-            for raw_poi_id, _, _, _ in seq:
+            for raw_poi_id, _, _, _, _ in seq:
                 mapped_poi_id = smap_reverse.get(raw_poi_id, -1)
                 if mapped_poi_id != -1:
                     used_poi_ids.add(mapped_poi_id)
@@ -248,21 +248,22 @@ class TrainDataset(data_utils.Dataset):
         tile_labels = [tile_label]
         last_time = seq[-1][1]
         tokens = seq[:-1]
-        tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3]] for item in tokens]
+        tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
         tokens = tokens[-self.max_len:]
         mask_len = self.max_len - len(tokens)
         if mask_len > 0:
             mask_len = mask_len - 1
         else:
             tokens = tokens[1:]
-        tokens = [[0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0.0, 0.0]]
+        tokens = [[0, 0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
         items = [x[0] for x in tokens]
         timestamps = [x[1] for x in tokens]
+        uids = [x[2] for x in tokens]
         quadkeys = []
         tile_ids = []
         coords = []
         for item in tokens:
-            lat, lon = item[2], item[3]
+            lat, lon = item[3], item[4]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
@@ -283,6 +284,7 @@ class TrainDataset(data_utils.Dataset):
         quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
+                torch.LongTensor(uids),
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(labels),
@@ -321,9 +323,10 @@ class Data_Train:
         return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True, collate_fn=self.collate_fn)
 
     def collate_fn(self, batch):
-        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
         return (torch.stack(items),
                 torch.stack(timestamps),
+                torch.stack(uids),
                 torch.stack(quadkey_indices),
                 torch.stack(tile_ids),
                 torch.stack(labels),
@@ -357,21 +360,22 @@ class ValDataset(data_utils.Dataset):
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
-        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3]] for item in seq]
+        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
+        uids = [x[2] for x in seq]
         quadkeys = []
         tile_ids = []
         coords = []
         for item in seq:
-            lat, lon = item[2], item[3]
+            lat, lon = item[3], item[4]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
@@ -392,6 +396,7 @@ class ValDataset(data_utils.Dataset):
         quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
+                torch.LongTensor(uids),
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
@@ -418,9 +423,10 @@ class Data_Val:
         return dataloader
 
     def collate_fn(self, batch):
-        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
         return (torch.stack(items),
                 torch.stack(timestamps),
+                torch.stack(uids),
                 torch.stack(quadkey_indices),
                 torch.stack(tile_ids),
                 torch.stack(labels),
@@ -456,21 +462,22 @@ class TestDataset(data_utils.Dataset):
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
-        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3]] for item in seq]
+        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
+        uids = [x[2] for x in seq]
         quadkeys = []
         tile_ids = []
         coords = []
         for item in seq:
-            lat, lon = item[2], item[3]
+            lat, lon = item[3], item[4]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
@@ -492,6 +499,7 @@ class TestDataset(data_utils.Dataset):
         quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
+                torch.LongTensor(uids),
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
@@ -519,9 +527,10 @@ class Data_Test:
         return dataloader
 
     def collate_fn(self, batch):
-        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
         return (torch.stack(items),
                 torch.stack(timestamps),
+                torch.stack(uids),
                 torch.stack(quadkey_indices),
                 torch.stack(tile_ids),
                 torch.stack(labels),
@@ -557,23 +566,24 @@ class CHLSDataset(data_utils.Dataset):
         tile_labels = [tile_label]
 
         last_time = data_temp[-1][1]
-        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3]] for item in seq]
+        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0.0, 0.0]]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
 
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
+        uids = [x[2] for x in seq]
 
         quadkeys = []
         tile_ids = []
         coords = []
         for item in seq:
-            lat, lon = item[2], item[3]
+            lat, lon = item[3], item[4]
             if lat == 0.0 and lon == 0.0:
                 quadkeys.append(['0'])
                 tile_ids.append(0)
@@ -597,6 +607,7 @@ class CHLSDataset(data_utils.Dataset):
 
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
+                torch.LongTensor(uids),
                 torch.LongTensor(quadkey_indices),
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
@@ -622,9 +633,10 @@ class Data_CHLS:
         return dataloader
 
     def collate_fn(self, batch):
-        items, timestamps, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
         return (torch.stack(items),
                 torch.stack(timestamps),
+                torch.stack(uids),
                 torch.stack(quadkey_indices),
                 torch.stack(tile_ids),
                 torch.stack(labels),
