@@ -156,19 +156,20 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 print(f"警告: 无效 items 检测到，min={items.min().item()}, max={items.max().item()}, item_num={args.item_num}")
                 items = torch.clamp(items, 0, unk_poi_id)
             optimizer.zero_grad()
-            scores, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=coords)
+            condition, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=coords)
             tile_rep_diffu, poi_rep_diffu = diffu_rep
             tile_weights, poi_weights = weights
             tile_t, poi_t = t
             tile_time_target, poi_time_target = time_target
             loss_diffu_tile = model_joint.loss_arcface(tile_rep_diffu, tile_labels, target_type="tile")
-            loss_diffu_poi = model_joint.loss_arcface(poi_rep_diffu, labels, target_type="poi")
-            loss_all = 4 * loss_diffu_tile + loss_diffu_poi
+            # loss_diffu_tile = model_joint.loss_diffu_ce(tile_rep_diffu, tile_labels)
+            loss_diffu_poi = model_joint.loss_diffu_ce(poi_rep_diffu, labels)
+            loss_all = loss_diffu_tile + loss_diffu_poi
             loss_all.backward()
             optimizer.step()
             if index_temp % int(len(tra_data_loader) / 5 + 1) == 0:
-                print('[%d/%d] Loss: %.4f' % (index_temp, len(tra_data_loader), loss_all.item()))
-                logger.info('[%d/%d] Loss: %.4f' % (index_temp, len(tra_data_loader), loss_all.item()))
+                print('[%d/%d] Loss_all: %.4f Loss_tile: %.4f Loss_poi: %.4f' % (index_temp, len(tra_data_loader), loss_all.item(), loss_diffu_tile.item(), loss_diffu_poi.item()))
+                logger.info('[%d/%d] Loss_all: %.4f Loss_tile: %.4f Loss_poi: %.4f' % (index_temp, len(tra_data_loader), loss_all.item(), loss_diffu_tile.item(), loss_diffu_poi.item()))
         print("loss in epoch {}: {}".format(epoch_temp, loss_all.item()))
         lr_scheduler.step()
         if epoch_temp != 0 and epoch_temp % args.eval_interval == 0:

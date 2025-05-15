@@ -396,6 +396,71 @@ class Transformer_rep(nn.Module):
         return hidden
 
 
+class tile_pre(nn.Module):
+    def __init__(self, args, target_type="tile"):
+        super(tile_pre, self).__init__()
+        self.hidden_size = args.hidden_size
+        self.device = args.device
+        self.target_type = target_type  # 新增：记录是用于poi还是tile
+
+        self.linear_item = nn.Linear(self.hidden_size, self.hidden_size)
+        self.linear_xt = nn.Linear(self.hidden_size, self.hidden_size)
+        self.linear_t = nn.Linear(self.hidden_size, self.hidden_size)
+
+        time_embed_dim = self.hidden_size * 4
+        self.time_embed = nn.Sequential(nn.Linear(self.hidden_size, time_embed_dim), SiLU(),
+                                        nn.Linear(time_embed_dim, self.hidden_size))
+
+        self.fuse_linear = nn.Linear(self.hidden_size * 3, self.hidden_size)
+        self.fc_item_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
+        self.fc_item_uid_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
+
+        self.mlp_model = nn.Linear(self.hidden_size*3, self.hidden_size)
+        self.mmlp_model = nn.Sequential(nn.Linear(self.hidden_size*3, self.hidden_size*6), nn.ReLU(), nn.Linear(self.hidden_size*6, self.hidden_size))
+
+        self.att = Transformer_rep(args)
+        self.time2vec = Time2Vec('sin', 128, int(self.hidden_size))
+        self.time2vec_day = Time2Vec('sin', 128, int(self.hidden_size))
+
+        self.lambda_uncertainty = args.lambda_uncertainty
+        self.dropout = nn.Dropout(args.dropout)
+        self.norm_diffu_rep = LayerNorm(self.hidden_size)
+
+    def timestep_embedding(self, timesteps, dim, max_period=10000):
+        half = dim // 2
+        freqs = th.exp(-math.log(max_period) * th.arange(start=0, end=half, dtype=th.float32) / half).to(
+            device=timesteps.device)
+        args = timesteps[:, None].float() * freqs[None]
+        embedding = th.cat([th.cos(args), th.sin(args)], dim=-1)
+        if dim % 2:
+            embedding = th.cat([embedding, th.zeros_like(embedding[:, :1])], dim=-1)
+        return embedding
+
+    def forward(self, rep, TimeStamp, user_embeds, quadkey_rep, mask_seq):
+        formatted_times = [[datetime.fromtimestamp(ts) for ts in seq] for seq in TimeStamp.tolist()]
+        norm_times = [[get_norm_time96(time) / 96 for time in row] for row in formatted_times]
+        day_times = [[get_day_norm7(time) / 7 for time in row] for row in formatted_times]
+        input_seq_time = torch.tensor(norm_times, dtype=torch.float).to(self.device)
+        input_seq_day_time = torch.tensor(day_times, dtype=torch.float).to(self.device)
+
+        time_emb_norm = self.time2vec(input_seq_time)
+        time_emb_day = self.time2vec_day(input_seq_day_time)
+        time_target = (0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
+
+        time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
+
+        rep_add_uid = torch.cat((rep, user_embeds), dim=2)
+        rep = self.fc_item_uid_out(rep_add_uid)
+
+        rep_diffu = self.att(rep + time_emb_all, mask_seq)
+
+        rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
+        out = rep_diffu[:, -1, :]
+        # out = out + time_target
+
+        return out
+
+
 class Diffu_xstart(nn.Module):
     def __init__(self, hidden_size, args, target_type="poi"):
         super(Diffu_xstart, self).__init__()
@@ -412,6 +477,10 @@ class Diffu_xstart(nn.Module):
 
         self.fuse_linear = nn.Linear(self.hidden_size * 3, self.hidden_size)
         self.fc_item_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
+        self.fc_item_uid_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
+
+        self.mlp_model = nn.Linear(self.hidden_size*3, self.hidden_size)
+        self.mmlp_model = nn.Sequential(nn.Linear(self.hidden_size*3, self.hidden_size*6), nn.ReLU(), nn.Linear(self.hidden_size*6, self.hidden_size))
 
         self.att = Transformer_rep(args)
         self.time2vec = Time2Vec('sin', 128, int(hidden_size))
@@ -448,20 +517,23 @@ class Diffu_xstart(nn.Module):
 
         x_t = x_t + emb_t
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
+        rep_add_uid = torch.cat((rep, user_embeds), dim=2)
+        rep = self.fc_item_uid_out(rep_add_uid)
 
-        # 根据target_type选择是否使用quadkey_rep
-        if self.target_type == "poi":
-            # 对于POI，保留原有逻辑，融合quadkey_rep
-            rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1) + quadkey_rep + user_embeds + time_emb_all, mask_seq)
-        else:
-            # 对于tile，跳过quadkey_rep，仅使用rep和x_t
-            rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1) + user_embeds + time_emb_all, mask_seq)
-
+        rep_diffu = self.att(rep + time_emb_all, mask_seq)
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
-        out = rep_diffu[:, -2, :]
-        out = out + time_target
+        out = rep_diffu[:, -1, :]
 
-        return out, rep_diffu, item_tag, time_target
+        out = out + time_target
+        condition = out
+
+        combined = torch.cat([x_t, condition, emb_t], dim=1)
+        output = self.mlp_model(combined)
+        # output = self.mmlp_model(combined)
+        output = self.norm_diffu_rep(self.dropout(output))
+        rep_diffu = None
+
+        return output, rep_diffu, item_tag, time_target, condition
 
 
 class DiffuRec(nn.Module):
@@ -590,7 +662,7 @@ class DiffuRec(nn.Module):
         # 有一个诡异的报错？这里加一个无用的参数
         item_tag = None
         # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
-        model_output, rep_diffu, item_tag, time_target = self.xstart_model(rep_item, x_t, self._scale_timesteps(t),
+        model_output, rep_diffu, item_tag, time_target, condition = self.xstart_model(rep_item, x_t, self._scale_timesteps(t),
                                                                            TimeStamp, user_embeds, quadkey_rep, mask_seq, item_tag)
 
         x_0 = model_output  ##output predict
@@ -635,12 +707,12 @@ class DiffuRec(nn.Module):
         # x_0 = self._predict_xstart_from_eps(x_t, t, eps)
 
         # 调用 xstart_model，预测目标表示 x_0 和扩散后的物品表示 item_rep_out
-        x_0, item_rep_out, item_tag, time_target = self.xstart_model(rep, x_t, self._scale_timesteps(t), TimeStamp, user_embeds, quadkey_rep,
+        x_0, item_rep_out, item_tag, time_target, condition = self.xstart_model(rep, x_t, self._scale_timesteps(t), TimeStamp, user_embeds, quadkey_rep,
                                                                      mask_seq, item_tag)  ##output predict
 
         # xstart_model 是一个神经网络模块，负责从扩散后的表示 x_t 中恢复目标表示 x_0。
         # item_rep 是历史交互序列（不包括目标序列）
 
-        return x_0, item_rep_out, weights, t, time_target  # 返回预测结果x0、(h1,h2,...,hn)、权重和时间步。
+        return x_0, item_rep_out, weights, t, time_target, condition  # 返回预测结果x0、(h1,h2,...,hn)、权重和时间步。
 
 

@@ -4,7 +4,7 @@ import math
 
 from torch.nn.functional import dropout
 
-from diffurec import DiffuRec
+from diffurec import DiffuRec, tile_pre
 import torch.nn.functional as F
 import copy
 import numpy as np
@@ -225,7 +225,7 @@ class Att_Diffuse_model(nn.Module):
         self.quadkey_pos_encoder = PositionalEmbedding(self.emb_dim, dropout=0.5, max_len=12)
 
         # 分别创建两个扩散模型
-        self.diffu_tile = diffu  # 用于瓦片序列
+        self.diffu_tile = tile_pre(args)  # 用于瓦片序列
         self.diffu_poi = DiffuRec(args)  # 用于POI序列
 
         self.diffu = diffu
@@ -239,22 +239,14 @@ class Att_Diffuse_model(nn.Module):
             self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
             self.tile_embeddings.weight[tile_vocab_size - 1].normal_(mean=0, std=0.1)  # <unk> 瓦片嵌入
 
-    def diffu_pre(self, rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq, target_type="poi"):
-        if target_type == "tile":
-            diffu_model = self.diffu_tile
-        else:
-            diffu_model = self.diffu_poi
-        seq_rep_diffu, item_rep_out, weights, t, time_target = diffu_model(
+    def diffu_pre(self, rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq):
+        seq_rep_diffu, item_rep_out, weights, t, time_target, condition = self.diffu_poi(
             rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq
         )
-        return seq_rep_diffu, item_rep_out, weights, t, time_target
+        return seq_rep_diffu, item_rep_out, weights, t, time_target, condition
 
-    def reverse(self, rep, noise_x_t, timestamps, user_embeds, quadkey_rep, mask_seq, target_type="poi"):
-        if target_type == "tile":
-            diffu_model = self.diffu_tile
-        else:
-            diffu_model = self.diffu_poi
-        reverse_pre, time_target = diffu_model.reverse_p_sample(
+    def reverse(self, rep, noise_x_t, timestamps, user_embeds, quadkey_rep, mask_seq):
+        reverse_pre, time_target = self.diffu_poi.reverse_p_sample(
             rep, noise_x_t, timestamps, user_embeds, quadkey_rep, mask_seq
         )
         return reverse_pre, time_target
@@ -395,24 +387,24 @@ class Att_Diffuse_model(nn.Module):
         if train_flag:
             labels_emb = self.item_embeddings(labels.squeeze(-1))
             tiles_emb = self.tile_embeddings(tile_labels.squeeze(-1))
-            tile_rep_diffu, tile_rep_item, tile_weights, tile_t, tile_time_target = self.diffu_pre(
-                tile_embeds, tiles_emb, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="tile"
+            tile_rep_diffu = self.diffu_tile(
+                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
-            poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target = self.diffu_pre(
-                poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="poi"
+            poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target, condition = self.diffu_pre(
+                poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
-            return None, (tile_rep_diffu, poi_rep_diffu), (tile_weights, poi_weights), (tile_t, poi_t), None, None, (
-                tile_time_target, poi_time_target)
+            return condition, (tile_rep_diffu, poi_rep_diffu), (None, poi_weights), (None, poi_t), None, None, (
+                None, poi_time_target)
         else:
             # 推理模式：分别去噪
             noise_x_t_tile = th.randn_like(item_embeddings[:, -1, :])
             noise_x_t_poi = th.randn_like(item_embeddings[:, -1, :])
             ######### 这个噪声是一样的吗，需不需要修改
-            tile_rep_diffu, tile_time_target = self.reverse(
-                tile_embeds, noise_x_t_tile, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="tile"
+            tile_rep_diffu = self.diffu_tile(
+                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
             poi_rep_diffu, poi_time_target = self.reverse(
-                poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq, target_type="poi"
+                poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
 
             # 瓦片排序：生成Tile Ranking List
@@ -429,6 +421,7 @@ class Att_Diffuse_model(nn.Module):
                 poi_weight_dict = {}
                 for rank, tile_id in enumerate(tile_ids):
                     weight = 1.0 / (rank + 1)
+                    # weight = 1.0
                     if tile_id == unk_tile_id:
                         continue  # 跳过 <unk> 瓦片
                     if tile_id in self.tile_to_poi and self.tile_to_poi[tile_id]:
@@ -465,7 +458,7 @@ class Att_Diffuse_model(nn.Module):
             poi_scores = poi_scores * candidate_poi_weights  # [batch_size, max_candidates]
             _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
 
-            return top_k_tiles, top_k_pois, (tile_time_target, poi_time_target)
+            return top_k_tiles, top_k_pois, (None, poi_time_target)
 
 
 def create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi):
