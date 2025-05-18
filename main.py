@@ -57,8 +57,8 @@ parser.add_argument('--quadkey_num', type=int, default=10000, help='Number of un
 parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Quadkey')  # 四键的细节层次
 parser.add_argument('--nhead', type=int, default=1, help='Number of attention heads')
 parser.add_argument('--num_layers', type=int, default=2, help='Number of Transformer layers')
-parser.add_argument('--top_k_tiles', type=int, default=15, help='Top K tiles for inference') # 选取K个瓦片
-parser.add_argument('--top_k_pois', type=int, default=20, help='Top K tiles for inference') # 选取K个POI,用于最终计算结果
+parser.add_argument('--top_k_tiles', type=int, default=50, help='Top K tiles for inference') # 选取K个瓦片
+parser.add_argument('--top_k_pois', type=int, default=100, help='Top K tiles for inference') # 选取K个POI,用于最终计算结果
 args = parser.parse_args()
 
 print(args)
