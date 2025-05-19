@@ -525,7 +525,7 @@ class Diffu_xstart(nn.Module):
 
         # out就是重建后的x0，rep_diffu是(h1,h2,...,hn)
         # out = rep_diffu[:, -1, :]
-        out = rep_diffu[:, -2, :]
+        out = rep_diffu[:, -1, :]
         
         # 用重建好的x0加上目标时间
         out = out + time_target  # size是[512, 128])
@@ -552,8 +552,8 @@ class Diffu_xstart(nn.Module):
         
         ### MLP
         combined = torch.cat([x_t, condition, emb_t], dim=1)
-        # output = self.mlp_model(combined)
-        output = self.mmlp_model(combined)
+        output = self.mlp_model(combined)
+        # output = self.mmlp_model(combined)
         output = self.norm_diffu_rep(self.dropout(output))
         out = output
         rep_diffu = None
@@ -562,7 +562,7 @@ class Diffu_xstart(nn.Module):
         # out = out + self.lambda_uncertainty * x_t
         # time_target = None
         
-        return out, rep_diffu, item_tag, time_target, condition
+        return condition, rep_diffu, item_tag, time_target, condition
 
 
 class DiffuRec(nn.Module):
@@ -675,63 +675,63 @@ class DiffuRec(nn.Module):
             - _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * eps
         )
 
-    # def q_posterior_mean_variance(self, x_start, x_t, t):
-    #     """
-    #     Compute the mean and variance of the diffusion posterior: 
-    #         q(x_{t-1} | x_t, x_0)
-
-    #     """
-    #     assert x_start.shape == x_t.shape
-    #     posterior_mean = (
-    #         _extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start
-    #         + _extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
-    #     )  ## \mu_t
-    #     assert (posterior_mean.shape[0] == x_start.shape[0])
-    #     return posterior_mean
-    
-    def q_posterior_mean_variance(self, epsilon, x_t, t):
+    def q_posterior_mean_variance(self, x_start, x_t, t):
         """
         Compute the mean and variance of the diffusion posterior: 
             q(x_{t-1} | x_t, x_0)
 
         """
-        assert epsilon.shape == x_t.shape
+        assert x_start.shape == x_t.shape
         posterior_mean = (
-            _extract_into_tensor(self.coef1, t, x_t.shape) * x_t
-            - _extract_into_tensor(self.coef2, t, x_t.shape) * epsilon
+            _extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start
+            + _extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )  ## \mu_t
-        assert (posterior_mean.shape[0] == epsilon.shape[0])
+        assert (posterior_mean.shape[0] == x_start.shape[0])
         return posterior_mean
-
-    # def p_mean_variance(self, rep_item, x_t, t, TimeStamp, mask_seq): 
-    #     # 有一个诡异的报错？这里加一个无用的参数
-    #     item_tag = None
-    #     # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
-    #     model_output, rep_diffu, item_tag, time_target, condition = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)
-        
-    #     x_0 = model_output  ##output predict
-    #     # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
-        
-    #     model_log_variance = np.log(np.append(self.posterior_variance[1], self.betas[1:]))
-    #     model_log_variance = _extract_into_tensor(model_log_variance, t, x_t.shape)
-        
-    #     model_mean = self.q_posterior_mean_variance(x_start=x_0, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
-    #     return model_mean, model_log_variance, time_target
     
+    # def q_posterior_mean_variance(self, epsilon, x_t, t):
+    #     """
+    #     Compute the mean and variance of the diffusion posterior: 
+    #         q(x_{t-1} | x_t, x_0)
+
+    #     """
+    #     assert epsilon.shape == x_t.shape
+    #     posterior_mean = (
+    #         _extract_into_tensor(self.coef1, t, x_t.shape) * x_t
+    #         - _extract_into_tensor(self.coef2, t, x_t.shape) * epsilon
+    #     )  ## \mu_t
+    #     assert (posterior_mean.shape[0] == epsilon.shape[0])
+    #     return posterior_mean
+
     def p_mean_variance(self, rep_item, x_t, t, TimeStamp, mask_seq): 
         # 有一个诡异的报错？这里加一个无用的参数
         item_tag = None
         # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
         model_output, rep_diffu, item_tag, time_target, condition = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)
         
-        epsilon = model_output  ##output predict
+        x_0 = model_output  ##output predict
         # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
         
         model_log_variance = np.log(np.append(self.posterior_variance[1], self.betas[1:]))
         model_log_variance = _extract_into_tensor(model_log_variance, t, x_t.shape)
         
-        model_mean = self.q_posterior_mean_variance(epsilon=epsilon, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
+        model_mean = self.q_posterior_mean_variance(x_start=x_0, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
         return model_mean, model_log_variance, time_target
+    
+    # def p_mean_variance(self, rep_item, x_t, t, TimeStamp, mask_seq): 
+    #     # 有一个诡异的报错？这里加一个无用的参数
+    #     item_tag = None
+    #     # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
+    #     model_output, rep_diffu, item_tag, time_target, condition = self.xstart_model(rep_item, x_t, self._scale_timesteps(t), TimeStamp, mask_seq, item_tag)
+        
+    #     epsilon = model_output  ##output predict
+    #     # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
+        
+    #     model_log_variance = np.log(np.append(self.posterior_variance[1], self.betas[1:]))
+    #     model_log_variance = _extract_into_tensor(model_log_variance, t, x_t.shape)
+        
+    #     model_mean = self.q_posterior_mean_variance(epsilon=epsilon, x_t=x_t, t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
+    #     return model_mean, model_log_variance, time_target
 
     def p_sample(self, item_rep, noise_x_t, t, TimeStamp, mask_seq):  
         # 给定当前时间步的噪声数据 x_t，生成去噪后的数据 x_(t-1)。通过采样，逐步将噪声数据恢复到原始数据。

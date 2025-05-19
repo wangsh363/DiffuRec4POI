@@ -125,10 +125,11 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
 
             loss_diffu_value = model_joint.loss_diffu_ce(condition, train_batch[1], time_target)   # 目标物品本身加时间
             # loss_rmse = model_joint.loss_rmse(diffu_rep, train_batch[1])
-            loss_diffu_value2 = model_joint.loss_mse(diffu_rep, noise)
+            # loss_diffu_value2 = model_joint.loss_mse1(diffu_rep, noise)
+            loss_diffu_value2 = model_joint.loss_diffu_ce(diffu_rep, train_batch[1], time_target)
 
           
-            loss_all = loss_diffu_value + loss_diffu_value2
+            loss_all = loss_diffu_value2
             loss_all.backward()
 
             optimizer.step()
