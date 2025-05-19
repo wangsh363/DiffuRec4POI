@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
@@ -25,7 +25,7 @@ parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPU')
-parser.add_argument('--batch_size', type=int, default=128, help='Batch Size')  # 512
+parser.add_argument('--batch_size', type=int, default=512, help='Batch Size')  # 512
 parser.add_argument("--hidden_size", default=128, type=int, help="hidden size of model")
 parser.add_argument('--dropout', type=float, default=0.1, help='Dropout of representation')
 parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout of item embedding')
@@ -58,7 +58,7 @@ parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Qua
 parser.add_argument('--nhead', type=int, default=1, help='Number of attention heads')
 parser.add_argument('--num_layers', type=int, default=2, help='Number of Transformer layers')
 parser.add_argument('--top_k_tiles', type=int, default=50, help='Top K tiles for inference') # 选取K个瓦片
-parser.add_argument('--top_k_pois', type=int, default=100, help='Top K tiles for inference') # 选取K个POI,用于最终计算结果
+parser.add_argument('--top_k_pois', type=int, default=20, help='Top K tiles for inference') # 选取K个POI,用于最终计算结果
 args = parser.parse_args()
 
 print(args)

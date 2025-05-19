@@ -129,6 +129,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     best_epoch = {'Best_epoch_HR@5': 0, 'Best_epoch_NDCG@5': 0, 'Best_epoch_HR@10': 0, 'Best_epoch_NDCG@10': 0, 'Best_epoch_HR@20': 0, 'Best_epoch_NDCG@20': 0}
     best_metrics_dict_tile = {'tile_Best_HR@5': 0, 'tile_Best_NDCG@5': 0, 'tile_Best_HR@10': 0, 'tile_Best_NDCG@10': 0, 'tile_Best_HR@20': 0, 'tile_Best_NDCG@20': 0}
     best_epoch_tile = {'tile_Best_epoch_HR@5': 0, 'tile_Best_epoch_NDCG@5': 0, 'tile_Best_epoch_HR@10': 0, 'tile_Best_epoch_NDCG@10': 0, 'tile_Best_epoch_HR@20': 0, 'tile_Best_epoch_NDCG@20': 0}
+    best_metrics_dict_poi = {'poi_Best_HR@5': 0, 'poi_Best_NDCG@5': 0, 'poi_Best_HR@10': 0, 'poi_Best_NDCG@10': 0, 'poi_Best_HR@20': 0, 'poi_Best_NDCG@20': 0}
+    best_epoch_poi = {'poi_Best_epoch_HR@5': 0, 'poi_Best_epoch_NDCG@5': 0, 'poi_Best_epoch_HR@10': 0, 'poi_Best_epoch_NDCG@10': 0, 'poi_Best_epoch_HR@20': 0, 'poi_Best_epoch_NDCG@20': 0}
     bad_count = 0
     unk_poi_id = args.item_num - 1
     unk_tile_id = args.tile_vocab_size - 1 if hasattr(args, 'tile_vocab_size') else model_joint.tile_vocab_size - 1
@@ -180,12 +182,13 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             model_joint.eval()
             with torch.no_grad():
                 metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
+                metrics_dict_poi = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
                 metrics_dict_tile = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
                     items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = val_batch
                     sequence = (items, timestamps, uids, quadkeys, tiles)
-                    top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = model_joint(sequence, labels, tile_labels, train_flag=False, coords=coords)
+                    top_k_tiles, top_k_pois, poi_rep, tile_rep = model_joint(sequence, labels, tile_labels, train_flag=False, coords=coords)
                     valid_mask = labels.squeeze(-1) != unk_poi_id
                     valid_mask_tile = tile_labels.squeeze(-1) != unk_tile_id
                     if not valid_mask.all():
@@ -195,6 +198,11 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     top_k_tiles = top_k_tiles[valid_mask_tile]
                     tile_labels = tile_labels[valid_mask_tile]
 
+                    scores_poi = model_joint.diffu_rep_pre(poi_rep)
+                    metrics_poi = hrs_and_ndcgs_k(scores_poi, labels, metric_ks)
+                    for k, v in metrics_poi.items():
+                        metrics_dict_poi[k].append(v)
+
                     if top_k_pois.size(0) > 0:
                         metrics = hrs_and_ndcgs_k_from_indices(top_k_pois, labels, metric_ks)
                         for k, v in metrics.items():
@@ -203,6 +211,15 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                         metrics_tile = hrs_and_ndcgs_k_from_indices(top_k_tiles, tile_labels, metric_ks)
                         for k, v in metrics_tile.items():
                             metrics_dict_tile[k].append(v)
+            
+            for key_temp, values_temp in metrics_dict_poi.items():
+                values_mean = round(np.mean(values_temp) * 100, 4)
+                if values_mean > best_metrics_dict_poi['poi_Best_' + key_temp]:
+                    flag_update_poi = 1
+                    bad_count_poi = 0
+                    best_metrics_dict_poi['poi_Best_' + key_temp] = values_mean
+                    best_epoch_poi['poi_Best_epoch_' + key_temp] = epoch_temp
+
             for key_temp, values_temp in metrics_dict.items():
                 values_mean = round(np.mean(values_temp) * 100, 4)
                 if values_mean > best_metrics_dict['Best_' + key_temp]:
@@ -210,6 +227,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     bad_count = 0
                     best_metrics_dict['Best_' + key_temp] = values_mean
                     best_epoch['Best_epoch_' + key_temp] = epoch_temp
+
             for key_temp, values_temp in metrics_dict_tile.items():
                 values_mean = round(np.mean(values_temp) * 100, 4)
                 if values_mean > best_metrics_dict_tile['tile_Best_' + key_temp]:
@@ -217,6 +235,15 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     bad_count_tile = 0
                     best_metrics_dict_tile['tile_Best_' + key_temp] = values_mean
                     best_epoch_tile['tile_Best_epoch_' + key_temp] = epoch_temp
+            
+            if flag_update_poi == 0:
+                bad_count_poi += 1
+            else:
+                print(best_metrics_dict_poi)
+                print(best_epoch_poi)
+                logger.info(best_metrics_dict_poi)
+                logger.info(best_epoch_poi)
+
             if flag_update == 0:
                 bad_count += 1
             else:

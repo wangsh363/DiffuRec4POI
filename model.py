@@ -420,7 +420,7 @@ class Att_Diffuse_model(nn.Module):
                 poi_set = set()
                 poi_weight_dict = {}
                 for rank, tile_id in enumerate(tile_ids):
-                    weight = 1.0 / (rank + 1)
+                    weight = 1.0 / (rank / 10 + 1)
                     # weight = 1.0
                     if tile_id == unk_tile_id:
                         continue  # 跳过 <unk> 瓦片
@@ -437,17 +437,18 @@ class Att_Diffuse_model(nn.Module):
             # 生成候选 POI 嵌入和权重张量
             max_candidates = max(len(cands) for cands in candidate_pois) if candidate_pois else 1
             candidate_poi_indices = torch.zeros(batch_size, max_candidates, dtype=torch.long, device=items.device)
-            candidate_poi_weights = torch.ones(batch_size, max_candidates, device=items.device)  # 默认权重为 1
+            candidate_poi_weights = torch.zeros(batch_size, max_candidates, device=items.device)  # 默认权重为 1
             for i, cands in enumerate(candidate_pois):
                 for j, poi_id in enumerate(cands):
                     if not (0 <= poi_id <= self.item_num):
                         print(f"无效 POI ID: {poi_id} 在 batch {i}, 最大有效 ID 为 {self.item_num}")
                         poi_id = 0
                     candidate_poi_indices[i, j] = poi_id
-                    candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 1.0
+                    assert len(poi_weights[i]) > j, f"POI 权重列表长度不足: {len(poi_weights[i])} < {j}"
+                    candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 0.0
                 for j in range(len(cands), max_candidates):
                     candidate_poi_indices[i, j] = 0
-                    candidate_poi_weights[i, j] = 1.0
+                    candidate_poi_weights[i, j] = 0.0
 
             # 生成候选 POI 嵌入
             candidate_poi_embeds = self.item_embeddings(candidate_poi_indices)  # [batch_size, max_candidates, emb_dim]
@@ -458,7 +459,7 @@ class Att_Diffuse_model(nn.Module):
             poi_scores = poi_scores * candidate_poi_weights  # [batch_size, max_candidates]
             _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
 
-            return top_k_tiles, top_k_pois, (None, poi_time_target)
+            return top_k_tiles, top_k_pois, poi_rep_diffu, tile_rep_diffu
 
 
 def create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi):
