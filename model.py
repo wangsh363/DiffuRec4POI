@@ -210,25 +210,24 @@ class Att_Diffuse_model(nn.Module):
         self.arcface_loss_poi = ArcFaceLoss(margin=0.1, scale=64)  # POI预测边距较大
 
         # 向quadkey添加自注意力机制
-        self.quadkey_enc_layer = TransformerEncoderLayer(
-            d_model=self.emb_dim,
-            nhead=args.nhead,  # args.nhead
-            dim_feedforward=self.emb_dim,  # 前馈网络维度
-            dropout=0.5,
-            activation='gelu',
-            batch_first=True
-        )
-        self.quadkey_encoder = TransformerEncoder(
-            self.quadkey_enc_layer,
-            num_layers=args.num_layers
-        )
-        self.quadkey_pos_encoder = PositionalEmbedding(self.emb_dim, dropout=0.5, max_len=12)
+        # self.quadkey_enc_layer = TransformerEncoderLayer(
+        #     d_model=self.emb_dim,
+        #     nhead=args.nhead,  # args.nhead
+        #     dim_feedforward=self.emb_dim,  # 前馈网络维度
+        #     dropout=0.5,
+        #     activation='gelu',
+        #     batch_first=True
+        # )
+        # self.quadkey_encoder = TransformerEncoder(
+        #     self.quadkey_enc_layer,
+        #     num_layers=args.num_layers
+        # )
+        # self.quadkey_pos_encoder = PositionalEmbedding(self.emb_dim, dropout=0.5, max_len=12)
 
         # 分别创建两个扩散模型
         self.diffu_tile = tile_pre(args)  # 用于瓦片序列
-        self.diffu_poi = DiffuRec(args)  # 用于POI序列
+        self.diffu_poi = diffu  # 用于POI序列
 
-        self.diffu = diffu
         self.loss_ce = nn.CrossEntropyLoss()  # 交叉熵损失
         self.loss_ce_rec = nn.CrossEntropyLoss(reduction='none')
         self.loss_mse = nn.MSELoss()
@@ -332,17 +331,17 @@ class Att_Diffuse_model(nn.Module):
         # position_embeddings = self.position_embeddings(position_ids)
 
         items, timestamps, uids, quadkeys, tiles = sequence
-        unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
-        unk_poi_id = self.item_num - 1  # <unk> POI ID
+        # unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
+        # unk_poi_id = self.item_num - 1  # <unk> POI ID
 
         # print("tile_vocab_size:", self.tile_vocab_size)
         # print("item_num:", self.item_num)
-        if tiles.max().item() >= self.tile_vocab_size or tiles.min().item() < 0:
-            print(f"检测到无效瓦片 ID: min={tiles.min().item()}, max={tiles.max().item()}, 词汇表大小={self.tile_vocab_size}")
-            tiles = torch.clamp(tiles, min=0, max=unk_tile_id)  # 映射到 <unk>
-        if items.max().item() >= self.item_num or items.min().item() < 0:
-            print(f"检测到无效 items: min={items.min().item()}, max={items.max().item()}, item_num={self.item_num}")
-            items = torch.clamp(items, min=0, max=unk_poi_id)  # 映射到 <unk>
+        # if tiles.max().item() >= self.tile_vocab_size or tiles.min().item() < 0:
+        #     print(f"检测到无效瓦片 ID: min={tiles.min().item()}, max={tiles.max().item()}, 词汇表大小={self.tile_vocab_size}")
+        #     tiles = torch.clamp(tiles, min=0, max=unk_tile_id)  # 映射到 <unk>
+        # if items.max().item() >= self.item_num or items.min().item() < 0:
+        #     print(f"检测到无效 items: min={items.min().item()}, max={items.max().item()}, item_num={self.item_num}")
+        #     items = torch.clamp(items, min=0, max=unk_poi_id)  # 映射到 <unk>
         # 现在把sequence里的时间信息取出来
         # 理想的数据是这样的：
         # sequence为tuple3, 0是items([512, 50]), 1是timestamps([512, 50])， 2是quadkeys([512, 50, 12])
@@ -355,14 +354,15 @@ class Att_Diffuse_model(nn.Module):
         item_embeddings = self.LayerNorm(item_embeddings)  # 归一化
 
         # quadkey嵌入及自注意力
-        quadkey_embeds = self.quadkey_embeddings(quadkeys)  # [batch_size, seq_len, max_ngram_len, emb_dim]
-        quadkey_embeds = quadkey_embeds.view(quadkey_embeds.size(0)*quadkey_embeds.size(1), quadkey_embeds.size(2), quadkey_embeds.size(3)).permute(1, 0, 2)
-        # 添加位置编码,捕捉 n-gram token 在 Quadkey 序列（单个字符串）中的相对位置信息，Transformer模型对输入序列的顺序不敏感
-        quadkey_embeds = self.quadkey_pos_encoder(quadkey_embeds)
-        # Transformer 的自注意力机制可以捕捉 token 之间的复杂依赖关系
-        quadkey_embeds = self.quadkey_encoder(quadkey_embeds)
-        quadkey_embeds = torch.mean(quadkey_embeds, dim=0)  # 均值池化
-        quadkey_embeds = quadkey_embeds.view(item_embeddings_origin.size(0), item_embeddings_origin.size(1), quadkey_embeds.size(1))  # 重塑为 [batch_size, seq_len, emb_dim]
+        # quadkey_embeds = self.quadkey_embeddings(quadkeys)  # [batch_size, seq_len, max_ngram_len, emb_dim]
+        # quadkey_embeds = quadkey_embeds.view(quadkey_embeds.size(0)*quadkey_embeds.size(1), quadkey_embeds.size(2), quadkey_embeds.size(3)).permute(1, 0, 2)
+        # # 添加位置编码,捕捉 n-gram token 在 Quadkey 序列（单个字符串）中的相对位置信息，Transformer模型对输入序列的顺序不敏感
+        # quadkey_embeds = self.quadkey_pos_encoder(quadkey_embeds)
+        # # Transformer 的自注意力机制可以捕捉 token 之间的复杂依赖关系
+        # quadkey_embeds = self.quadkey_encoder(quadkey_embeds)
+        # quadkey_embeds = torch.mean(quadkey_embeds, dim=0)  # 均值池化
+        # quadkey_embeds = quadkey_embeds.view(item_embeddings_origin.size(0), item_embeddings_origin.size(1), quadkey_embeds.size(1))  # 重塑为 [batch_size, seq_len, emb_dim]
+        quadkey_embeds = None
 
         poi_embeds = item_embeddings
         # 用户序列嵌入和编码
@@ -370,10 +370,10 @@ class Att_Diffuse_model(nn.Module):
         user_embeds = self.embed_dropout(user_embeds)  ## dropout first than layernorm
         user_embeds = self.LayerNorm(user_embeds)  # 归一化
         # 瓦片序列嵌入和编码
-        tile_embeds = self.tile_embeddings(tiles)
-        tile_embeds = self.embed_dropout(tile_embeds)  ## dropout first than layernorm
-        tile_embeds = self.LayerNorm(tile_embeds)  # 归一化
-        tile_embeds = self.tile_pos_enc(tile_embeds, coords)
+        # tile_embeds = self.tile_embeddings(tiles)
+        # tile_embeds = self.embed_dropout(tile_embeds)  ## dropout first than layernorm
+        # tile_embeds = self.LayerNorm(tile_embeds)  # 归一化
+        # tile_embeds = self.tile_pos_enc(tile_embeds, coords)
         # 问题就在如何去产生tile的位置序列,此外还需要看看位置编码层的初始化，利用经纬度的二维坐标生成后面继续判断两种类别，区分tile和pos的嵌入
 
 
@@ -386,78 +386,81 @@ class Att_Diffuse_model(nn.Module):
 
         if train_flag:
             labels_emb = self.item_embeddings(labels.squeeze(-1))
-            tiles_emb = self.tile_embeddings(tile_labels.squeeze(-1))
-            tile_rep_diffu = self.diffu_tile(
-                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
-            )
+            # tiles_emb = self.tile_embeddings(tile_labels.squeeze(-1))
+            # tile_rep_diffu = self.diffu_tile(
+            #     tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
+            # )
             poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target, condition = self.diffu_pre(
                 poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
-            return condition, (tile_rep_diffu, poi_rep_diffu), (None, poi_weights), (None, poi_t), None, None, (
+            return condition, (None, poi_rep_diffu), (None, poi_weights), (None, poi_t), None, None, (
                 None, poi_time_target)
         else:
             # 推理模式：分别去噪
             noise_x_t_tile = th.randn_like(item_embeddings[:, -1, :])
             noise_x_t_poi = th.randn_like(item_embeddings[:, -1, :])
             ######### 这个噪声是一样的吗，需不需要修改
-            tile_rep_diffu = self.diffu_tile(
-                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
-            )
+            # tile_rep_diffu = self.diffu_tile(
+            #     tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
+            # )
             poi_rep_diffu, poi_time_target = self.reverse(
                 poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
 
-            # 瓦片排序：生成Tile Ranking List
-            tile_scores = torch.matmul(tile_rep_diffu, self.tile_embeddings.weight.t())
-            _, top_k_tiles = torch.topk(tile_scores, k=self.top_k_tiles, dim=-1)  # Top K瓦片
+            # # 瓦片排序：生成Tile Ranking List
+            # tile_scores = torch.matmul(tile_rep_diffu, self.tile_embeddings.weight.t())
+            # _, top_k_tiles = torch.topk(tile_scores, k=self.top_k_tiles, dim=-1)  # Top K瓦片
 
-            # 从 Top-K 瓦片中提取候选 POI，并计算权重
-            batch_size = top_k_tiles.size(0)
-            candidate_pois = []
-            poi_weights = []  # 记录每个候选 POI 的权重
-            for i in range(batch_size):
-                tile_ids = top_k_tiles[i].cpu().numpy()
-                poi_set = set()
-                poi_weight_dict = {}
-                for rank, tile_id in enumerate(tile_ids):
-                    weight = 1.0 / (rank / 10 + 1)
-                    # weight = 1.0
-                    if tile_id == unk_tile_id:
-                        continue  # 跳过 <unk> 瓦片
-                    if tile_id in self.tile_to_poi and self.tile_to_poi[tile_id]:
-                        for poi_id in self.tile_to_poi[tile_id]:
-                            if poi_id >= self.item_num  or poi_id == unk_poi_id:
-                                print(f"警告: 无效 POI ID {poi_id} 在瓦片 {tile_id}，跳过")
-                                continue
-                            poi_set.add(poi_id)
-                            poi_weight_dict[poi_id] = poi_weight_dict.get(poi_id, 0.0) + weight
-                candidate_pois.append(list(poi_set))
-                poi_weights.append([poi_weight_dict.get(poi_id, 0.0) for poi_id in poi_set])
+            # # 从 Top-K 瓦片中提取候选 POI，并计算权重
+            # batch_size = top_k_tiles.size(0)
+            # candidate_pois = []
+            # poi_weights = []  # 记录每个候选 POI 的权重
+            # for i in range(batch_size):
+            #     tile_ids = top_k_tiles[i].cpu().numpy()
+            #     poi_set = set()
+            #     poi_weight_dict = {}
+            #     for rank, tile_id in enumerate(tile_ids):
+            #         weight = 1.0 / (rank / 10 + 1)
+            #         # weight = 1.0
+            #         if tile_id == unk_tile_id:
+            #             continue  # 跳过 <unk> 瓦片
+            #         if tile_id in self.tile_to_poi and self.tile_to_poi[tile_id]:
+            #             for poi_id in self.tile_to_poi[tile_id]:
+            #                 if poi_id >= self.item_num  or poi_id == unk_poi_id:
+            #                     print(f"警告: 无效 POI ID {poi_id} 在瓦片 {tile_id}，跳过")
+            #                     continue
+            #                 poi_set.add(poi_id)
+            #                 poi_weight_dict[poi_id] = poi_weight_dict.get(poi_id, 0.0) + weight
+            #     candidate_pois.append(list(poi_set))
+            #     poi_weights.append([poi_weight_dict.get(poi_id, 0.0) for poi_id in poi_set])
 
-            # 生成候选 POI 嵌入和权重张量
-            max_candidates = max(len(cands) for cands in candidate_pois) if candidate_pois else 1
-            candidate_poi_indices = torch.zeros(batch_size, max_candidates, dtype=torch.long, device=items.device)
-            candidate_poi_weights = torch.zeros(batch_size, max_candidates, device=items.device)  # 默认权重为 1
-            for i, cands in enumerate(candidate_pois):
-                for j, poi_id in enumerate(cands):
-                    if not (0 <= poi_id <= self.item_num):
-                        print(f"无效 POI ID: {poi_id} 在 batch {i}, 最大有效 ID 为 {self.item_num}")
-                        poi_id = 0
-                    candidate_poi_indices[i, j] = poi_id
-                    assert len(poi_weights[i]) > j, f"POI 权重列表长度不足: {len(poi_weights[i])} < {j}"
-                    candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 0.0
-                for j in range(len(cands), max_candidates):
-                    candidate_poi_indices[i, j] = 0
-                    candidate_poi_weights[i, j] = 0.0
+            # # 生成候选 POI 嵌入和权重张量
+            # max_candidates = max(len(cands) for cands in candidate_pois) if candidate_pois else 1
+            # candidate_poi_indices = torch.zeros(batch_size, max_candidates, dtype=torch.long, device=items.device)
+            # candidate_poi_weights = torch.zeros(batch_size, max_candidates, device=items.device)  # 默认权重为 1
+            # for i, cands in enumerate(candidate_pois):
+            #     for j, poi_id in enumerate(cands):
+            #         if not (0 <= poi_id <= self.item_num):
+            #             print(f"无效 POI ID: {poi_id} 在 batch {i}, 最大有效 ID 为 {self.item_num}")
+            #             poi_id = 0
+            #         candidate_poi_indices[i, j] = poi_id
+            #         assert len(poi_weights[i]) > j, f"POI 权重列表长度不足: {len(poi_weights[i])} < {j}"
+            #         candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 0.0
+            #     for j in range(len(cands), max_candidates):
+            #         candidate_poi_indices[i, j] = 0
+            #         candidate_poi_weights[i, j] = 0.0
 
-            # 生成候选 POI 嵌入
-            candidate_poi_embeds = self.item_embeddings(candidate_poi_indices)  # [batch_size, max_candidates, emb_dim]
+            # # 生成候选 POI 嵌入
+            # candidate_poi_embeds = self.item_embeddings(candidate_poi_indices)  # [batch_size, max_candidates, emb_dim]
 
-            # 计算 POI 分数，应用权重
-            poi_scores = torch.matmul(poi_rep_diffu.unsqueeze(1), candidate_poi_embeds.transpose(-1, -2)).squeeze(1)
-            # 应用权重调整 POI 分数
-            poi_scores = poi_scores * candidate_poi_weights  # [batch_size, max_candidates]
-            _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
+            # # 计算 POI 分数，应用权重
+            # poi_scores = torch.matmul(poi_rep_diffu.unsqueeze(1), candidate_poi_embeds.transpose(-1, -2)).squeeze(1)
+            # # 应用权重调整 POI 分数
+            # poi_scores = poi_scores * candidate_poi_weights  # [batch_size, max_candidates]
+            # _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
+            top_k_tiles = None
+            top_k_pois = None
+            tile_rep_diffu = None
 
             return top_k_tiles, top_k_pois, poi_rep_diffu, tile_rep_diffu
 

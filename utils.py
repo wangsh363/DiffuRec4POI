@@ -262,26 +262,27 @@ class TrainDataset(data_utils.Dataset):
         quadkeys = []
         tile_ids = []
         coords = []
-        for item in tokens:
-            lat, lon = item[3], item[4]
-            if lat == 0.0 and lon == 0.0:
-                quadkeys.append(['0'])
-                tile_ids.append(0)
-                coords.append([0.0, 0.0])
-            else:
-                qk = Quadkey.from_geo((lat, lon), self.lod)
-                qk_str = str(qk)
-                qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
-                quadkeys.append(qk_ngrams.split())
-                tile_id = map_to_tile(self.tiles, lon, lat)
-                tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
-                tile_ids.append(tile_id)
-                coords.append([lat, lon])
-        unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
-        max_ngram_len = max(len(indices) for indices in quadkey_indices)
-        pad_index = self.quadkey_vocab['<pad>']
-        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        # for item in tokens:
+        #     lat, lon = item[3], item[4]
+        #     if lat == 0.0 and lon == 0.0:
+        #         quadkeys.append(['0'])
+        #         tile_ids.append(0)
+        #         coords.append([0.0, 0.0])
+        #     else:
+        #         qk = Quadkey.from_geo((lat, lon), self.lod)
+        #         qk_str = str(qk)
+        #         qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+        #         quadkeys.append(qk_ngrams.split())
+        #         tile_id = map_to_tile(self.tiles, lon, lat)
+        #         tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
+        #         tile_ids.append(tile_id)
+        #         coords.append([lat, lon])
+        # unk_index = self.quadkey_vocab['<unk>']
+        # quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
+        # max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        # pad_index = self.quadkey_vocab['<pad>']
+        # quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        quadkey_indices = []
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(uids),
@@ -374,26 +375,27 @@ class ValDataset(data_utils.Dataset):
         quadkeys = []
         tile_ids = []
         coords = []
-        for item in seq:
-            lat, lon = item[3], item[4]
-            if lat == 0.0 and lon == 0.0:
-                quadkeys.append(['0'])
-                tile_ids.append(0)
-                coords.append([0.0, 0.0])
-            else:
-                qk = Quadkey.from_geo((lat, lon), self.lod)
-                qk_str = str(qk)
-                qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
-                quadkeys.append(qk_ngrams.split())
-                tile_id = map_to_tile(self.tiles, lon, lat)
-                tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
-                tile_ids.append(tile_id)
-                coords.append([lat, lon])
-        unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
-        max_ngram_len = max(len(indices) for indices in quadkey_indices)
-        pad_index = self.quadkey_vocab['<pad>']
-        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        # for item in seq:
+        #     lat, lon = item[3], item[4]
+        #     if lat == 0.0 and lon == 0.0:
+        #         quadkeys.append(['0'])
+        #         tile_ids.append(0)
+        #         coords.append([0.0, 0.0])
+        #     else:
+        #         qk = Quadkey.from_geo((lat, lon), self.lod)
+        #         qk_str = str(qk)
+        #         qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+        #         quadkeys.append(qk_ngrams.split())
+        #         tile_id = map_to_tile(self.tiles, lon, lat)
+        #         tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else unk_tile_id
+        #         tile_ids.append(tile_id)
+        #         coords.append([lat, lon])
+        # unk_index = self.quadkey_vocab['<unk>']
+        # quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
+        # max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        # pad_index = self.quadkey_vocab['<pad>']
+        # quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        quadkey_indices = []
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(uids),

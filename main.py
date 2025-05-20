@@ -14,14 +14,14 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', default='gowalla', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
+parser.add_argument('--dataset', default='nyc', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
 parser.add_argument('--log_file', default='log/', help='log dir path')
-parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')  
+parser.add_argument('--random_seed', type=int, default=2025, help='Random seed')  
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPU')
@@ -45,7 +45,7 @@ parser.add_argument('--diffusion_steps', type=int, default=32, help='Diffusion s
 parser.add_argument('--lambda_uncertainty', type=float, default=0.001, help='uncertainty weight')
 parser.add_argument('--noise_schedule', default='trunc_lin', help='Beta generation')  ## cosine, linear, trunc_cos, trunc_lin, pw_lin, sqrt
 parser.add_argument('--rescale_timesteps', default=True, help='rescal timesteps')
-parser.add_argument('--eval_interval', type=int, default=1, help='the number of epoch to eval')  # parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')
+parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')  # parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')
 parser.add_argument('--patience', type=int, default=5, help='the number of epoch to wait before early stop')
 parser.add_argument('--description', type=str, default='Diffu_norm_score', help='Model brief introduction')
 parser.add_argument('--long_head', default=False, help='Long and short sequence, head and long-tail items')
