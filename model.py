@@ -420,7 +420,7 @@ class Att_Diffuse_model(nn.Module):
                 poi_set = set()
                 poi_weight_dict = {}
                 for rank, tile_id in enumerate(tile_ids):
-                    weight = 1.0 / (rank / 10 + 1)
+                    weight = 1.0 / (rank / 20 + 1)
                     # weight = 1.0
                     if tile_id == unk_tile_id:
                         continue  # 跳过 <unk> 瓦片
@@ -442,7 +442,7 @@ class Att_Diffuse_model(nn.Module):
                 for j, poi_id in enumerate(cands):
                     if not (0 <= poi_id <= self.item_num):
                         print(f"无效 POI ID: {poi_id} 在 batch {i}, 最大有效 ID 为 {self.item_num}")
-                        poi_id = 0
+                        poi_id = -1
                     candidate_poi_indices[i, j] = poi_id
                     assert len(poi_weights[i]) > j, f"POI 权重列表长度不足: {len(poi_weights[i])} < {j}"
                     candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 0.0

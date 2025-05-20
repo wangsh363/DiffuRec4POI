@@ -57,13 +57,22 @@ def hrs_and_ndcgs_k_from_indices(top_k_indices, labels, ks):
     metrics = {}
     labels = labels.clone().detach().to('cpu')
     top_k_indices = top_k_indices.clone().detach().to('cpu')
+    batch_size = labels.size(0)
+    print("Batch size:", batch_size)
+    print("Labels shape:", labels.shape, "dtype:", labels.dtype)
+    print("Top_k_indices shape:", top_k_indices.shape, "dtype:", top_k_indices.dtype)
 
     # 计算HR
     hr = []
+    labels_squeezed = labels.squeeze(-1)  # (batch_size,)
     for k in ks:
-        top_k = top_k_indices[:, :min(k, top_k_indices.size(1))]
-        hit = (labels.unsqueeze(1) == top_k).any(dim=1).float()
-        hr.append(hit.mean().item())
+        top_k = top_k_indices[:, :min(k, top_k_indices.size(1))]  # (batch_size, k)
+        hit = torch.isin(labels_squeezed, top_k)  # (batch_size,)
+        hr_val = hit.float().mean().item()
+        print(f"k={k}, Hit count:", hit.sum().item(), "Batch size:", hit.size(0), "HR:", hr_val)
+        if hit.size(0) != batch_size:
+            print(f"错误: 批次大小不一致，预期 {batch_size}，实际 {hit.size(0)}")
+        hr.append(hr_val)
 
     # 计算NDCG
     ndcg = []
@@ -275,7 +284,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             test_batch = [x.to(device) for x in test_batch]
             items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = test_batch
             sequence = (items, timestamps, uids, quadkeys, tiles)
-            top_k_tiles, top_k_pois, (tile_time_target, poi_time_target) = best_model(sequence, labels, tile_labels, train_flag=False, coords=coords)
+            top_k_tiles, top_k_pois, poi_time_target, tile_time_target = best_model(sequence, labels, tile_labels, train_flag=False, coords=coords)
             valid_mask = labels.squeeze(-1) != unk_poi_id
             if not valid_mask.all():
                 print(f"警告: 测试集中包含 {valid_mask.size(0) - valid_mask.sum().item()} 个 <unk> 标签")
