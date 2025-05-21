@@ -58,9 +58,6 @@ def hrs_and_ndcgs_k_from_indices(top_k_indices, labels, ks):
     labels = labels.clone().detach().to('cpu')
     top_k_indices = top_k_indices.clone().detach().to('cpu')
     batch_size = labels.size(0)
-    print("Batch size:", batch_size)
-    print("Labels shape:", labels.shape, "dtype:", labels.dtype)
-    print("Top_k_indices shape:", top_k_indices.shape, "dtype:", top_k_indices.dtype)
 
     # 计算HR
     hr = []
@@ -69,7 +66,6 @@ def hrs_and_ndcgs_k_from_indices(top_k_indices, labels, ks):
         top_k = top_k_indices[:, :min(k, top_k_indices.size(1))]  # (batch_size, k)
         hit = torch.isin(labels_squeezed, top_k)  # (batch_size,)
         hr_val = hit.float().mean().item()
-        print(f"k={k}, Hit count:", hit.sum().item(), "Batch size:", hit.size(0), "HR:", hr_val)
         if hit.size(0) != batch_size:
             print(f"错误: 批次大小不一致，预期 {batch_size}，实际 {hit.size(0)}")
         hr.append(hr_val)

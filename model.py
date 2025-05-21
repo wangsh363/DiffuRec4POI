@@ -191,7 +191,8 @@ class Att_Diffuse_model(nn.Module):
         # 这是一个嵌入层。第一个参数是最大索引值，第二个参数是嵌入层维度。用来给物品id编码
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
-        self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
+        self.PAD_IDX = args.item_num
+        self.item_embeddings = nn.Embedding(self.item_num + 1, self.emb_dim, padding_idx=self.PAD_IDX)
         self.user_embeddings = nn.Embedding(self.user_num, self.emb_dim)
         # quadkey嵌入
         self.quadkey_embeddings = nn.Embedding(quadkey_vocab_size, self.emb_dim)
@@ -447,7 +448,7 @@ class Att_Diffuse_model(nn.Module):
                     assert len(poi_weights[i]) > j, f"POI 权重列表长度不足: {len(poi_weights[i])} < {j}"
                     candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 0.0
                 for j in range(len(cands), max_candidates):
-                    candidate_poi_indices[i, j] = 0
+                    candidate_poi_indices[i, j] = self.PAD_IDX
                     candidate_poi_weights[i, j] = 0.0
 
             # 生成候选 POI 嵌入
@@ -456,7 +457,9 @@ class Att_Diffuse_model(nn.Module):
             # 计算 POI 分数，应用权重
             poi_scores = torch.matmul(poi_rep_diffu.unsqueeze(1), candidate_poi_embeds.transpose(-1, -2)).squeeze(1)
             # 应用权重调整 POI 分数
-            poi_scores = poi_scores * candidate_poi_weights  # [batch_size, max_candidates]
+            poi_scores = poi_scores + 0.2 * (candidate_poi_weights)
+            mask = (candidate_poi_indices == self.PAD_IDX)
+            poi_scores = poi_scores.masked_fill(mask, -1e9)  # [batch_size, max_candidates]
             _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
 
             return top_k_tiles, top_k_pois, poi_rep_diffu, tile_rep_diffu
