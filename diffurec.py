@@ -515,7 +515,6 @@ class Diffu_xstart(nn.Module):
         time_emb_day = self.time2vec_day(input_seq_day_time)
         time_target = (0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
 
-        x_t = x_t + emb_t
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
         rep_add_uid = torch.cat((rep, user_embeds), dim=2)
         rep = self.fc_item_uid_out(rep_add_uid)

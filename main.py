@@ -19,7 +19,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', default='gowalla', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
+parser.add_argument('--dataset', default='nyc', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
 parser.add_argument('--log_file', default='log/', help='log dir path')
 parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')  
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
@@ -58,7 +58,7 @@ parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Qua
 parser.add_argument('--nhead', type=int, default=1, help='Number of attention heads')
 parser.add_argument('--num_layers', type=int, default=2, help='Number of Transformer layers')
 parser.add_argument('--top_k_tiles', type=int, default=50, help='Top K tiles for inference') # 选取K个瓦片
-parser.add_argument('--top_k_pois', type=int, default=20, help='Top K tiles for inference') # 选取K个POI,用于最终计算结果
+parser.add_argument('--top_k_pois', type=int, default=20, help='Top K pois for inference') # 选取K个POI,用于最终计算结果
 args = parser.parse_args()
 
 print(args)
@@ -196,8 +196,10 @@ def main(args):
         data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
                                  poi, time_str, uid, latitude, longitude in value]
 
-    # 获取词汇表和映射
-    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile = build_data_vocabs(data_raw)
+    # 使用缓存构建词汇表
+    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile = build_data_vocabs(
+        data_raw, cache_dir='./cache', dataset_name=args.dataset
+    )
 
     quadkey_vocab_size = len(quadkey_vocab)
     tile_vocab_size = len(tile_vocab)
