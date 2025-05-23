@@ -163,13 +163,12 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             #     items = torch.clamp(items, 0, unk_poi_id)
             optimizer.zero_grad()
             condition, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=coords)
-            tile_rep_diffu, poi_rep_diffu = diffu_rep
             tile_weights, poi_weights = weights
             tile_t, poi_t = t
             tile_time_target, poi_time_target = time_target
             # loss_diffu_tile = model_joint.loss_arcface(tile_rep_diffu, tile_labels, target_type="tile")
             # loss_diffu_tile = model_joint.loss_diffu_ce(tile_rep_diffu, tile_labels)
-            loss_diffu_poi = model_joint.loss_diffu_ce(poi_rep_diffu, labels)
+            loss_diffu_poi = model_joint.loss_diffu_ce(diffu_rep, labels)
             # loss_all = loss_diffu_tile + loss_diffu_poi
             loss_all = loss_diffu_poi
             loss_all.backward()
@@ -220,6 +219,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             for key_temp, values_temp in metrics_dict_poi.items():
                 values_mean = round(np.mean(values_temp) * 100, 4)
                 if values_mean > best_metrics_dict_poi['poi_Best_' + key_temp]:
+                    print('not bad, print result...')
                     flag_update_poi = 1
                     bad_count_poi = 0
                     best_metrics_dict_poi['poi_Best_' + key_temp] = values_mean
@@ -243,11 +243,16 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             
             if flag_update_poi == 0:
                 bad_count_poi += 1
+                print(f'bad! count: {bad_count_poi}')
             else:
                 print(best_metrics_dict_poi)
                 print(best_epoch_poi)
                 logger.info(best_metrics_dict_poi)
                 logger.info(best_epoch_poi)
+                best_model = copy.deepcopy(model_joint)
+            if bad_count_poi >= args.patience:
+                print("stop!")
+                break
 
             # if flag_update == 0:
             #     bad_count += 1
@@ -257,9 +262,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             #     logger.info(best_metrics_dict)
             #     logger.info(best_epoch)
             #     best_model = copy.deepcopy(model_joint)
-            if bad_count_poi >= args.patience:
-                print("stop!")
-                break
+
 
             # if flag_update_tile == 0:
             #     bad_count_tile += 1
@@ -269,8 +272,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             #     logger.info(best_metrics_dict_tile)
             #     logger.info(best_epoch_tile)
 
-    logger.info(best_metrics_dict)
-    logger.info(best_epoch)
+    logger.info(best_metrics_dict_poi)
+    logger.info(best_epoch_poi)
     if args.eval_interval > epochs:
         best_model = copy.deepcopy(model_joint)
     top_100_item = []
@@ -309,10 +312,10 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         logger.info(test_metrics_dict_mean)
         print('Best Eval---------------------------------------------------------')
         logger.info('Best Eval---------------------------------------------------------')
-        print(best_metrics_dict)
-        print(best_epoch)
-        logger.info(best_metrics_dict)
-        logger.info(best_epoch)
+        print(best_metrics_dict_poi)
+        print(best_epoch_poi)
+        logger.info(best_metrics_dict_poi)
+        logger.info(best_epoch_poi)
         print(args)
         if args.diversity_measure:
             path_data = '../datasets/data/category/' + args.dataset + '/id_category_dict.pkl'

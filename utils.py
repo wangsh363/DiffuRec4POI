@@ -240,22 +240,21 @@ class TrainDataset(data_utils.Dataset):
 
     def __getitem__(self, index):
         seq = self._getseq(index)
-        raw_label = seq[-1][0]
-        label = self.smap_reverse.get(raw_label, -1)
+        label = seq[-1][0]
         labels = [label]
         unk_tile_id = self.tile_vocab_size - 1
         tile_label = self.poi_to_tile.get(label, unk_tile_id)
         tile_labels = [tile_label]
         last_time = seq[-1][1]
         tokens = seq[:-1]
-        tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
+        tokens = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
         tokens = tokens[-self.max_len:]
         mask_len = self.max_len - len(tokens)
-        if mask_len > 0:
-            mask_len = mask_len - 1
-        else:
-            tokens = tokens[1:]
-        tokens = [[0, 0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
+        # if mask_len > 0:
+        #     mask_len = mask_len
+        # else:
+        #     tokens = tokens[1:]
+        tokens = [[0, 0, 0, 0.0, 0.0]] * mask_len + tokens
         items = [x[0] for x in tokens]
         timestamps = [x[1] for x in tokens]
         uids = [x[2] for x in tokens]
@@ -354,21 +353,20 @@ class ValDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user]
-        raw_answer = self.u2answer[user][0][0]
-        answer = self.smap_reverse.get(raw_answer, -1)
+        answer = self.u2answer[user][0][0]
         answer = [answer]
         unk_tile_id = self.tile_vocab_size - 1
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
-        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        if padding_len > 0:
-            padding_len = padding_len - 1
-        else:
-            seq = seq[1:]
-        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
+        # if padding_len > 0:
+        #     padding_len = padding_len
+        # else:
+        #     seq = seq[1:]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
         uids = [x[2] for x in seq]
@@ -457,21 +455,20 @@ class TestDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user]
-        raw_answer = self.u2answer[user][0][0]
-        answer = self.smap_reverse.get(raw_answer, -1)
+        answer = self.u2answer[user][0][0]
         answer = [answer]
         unk_tile_id = self.tile_vocab_size - 1
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
-        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        if padding_len > 0:
-            padding_len = padding_len - 1
-        else:
-            seq = seq[1:]
-        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
+        # if padding_len > 0:
+        #     padding_len = padding_len
+        # else:
+        #     seq = seq[1:]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
         uids = [x[2] for x in seq]

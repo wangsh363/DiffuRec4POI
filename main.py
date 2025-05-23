@@ -21,7 +21,7 @@ os.environ["TORCH_USE_CUDA_DSA"] = "1"
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', default='nyc', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
 parser.add_argument('--log_file', default='log/', help='log dir path')
-parser.add_argument('--random_seed', type=int, default=2025, help='Random seed')  
+parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')  
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPU')
@@ -161,14 +161,14 @@ def main(args):
     print(f"smap 键范围: [{min(smap.keys())}, {max(smap.keys())}], 值示例: {list(smap.values())[:5]}")
 
     # 添加 <unk> 索引
-    max_poi_id = max(smap.keys()) if smap else 0
-    unk_poi_id = max_poi_id + 1
-    smap_reverse[-1] = unk_poi_id  # 用 -1 表示未知POI
-    smap[unk_poi_id] = -1  # 反向映射
-    print(f"添加 <unk> POI ID: {unk_poi_id}")
+    # max_poi_id = max(smap.keys()) if smap else 0
+    # unk_poi_id = max_poi_id + 1
+    # smap_reverse[-1] = unk_poi_id  # 用 -1 表示未知POI
+    # smap[unk_poi_id] = -1  # 反向映射
+    # print(f"添加 <unk> POI ID: {unk_poi_id}")
 
     # num数量加了一个unk，来映射未知POI
-    args = item_num_create(args, unk_poi_id + 1)
+    args = item_num_create(args, max(smap.values()))
     data_raw['smap_reverse'] = smap_reverse
 
     # 计算用户数量
@@ -176,7 +176,7 @@ def main(args):
     for split in ['train', 'val', 'test']:
         for user_id in data_raw[split].keys():
             user_ids.add(user_id)
-    args.user_num = len(user_ids) + 1  # 加1以包含可能的<unk>用户ID
+    args.user_num = len(user_ids)  # 加1以包含可能的<unk>用户ID
     print(f"用户数量: {args.user_num}")
 
     # args = item_num_create(args, len(data_raw['smap']))  # 根据smap的长度确定最大编号

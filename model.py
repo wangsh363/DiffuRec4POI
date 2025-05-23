@@ -184,7 +184,7 @@ class Att_Diffuse_model(nn.Module):
     def __init__(self, diffu, args, quadkey_vocab_size, tile_vocab_size, tile_to_poi):
         super(Att_Diffuse_model, self).__init__()
         self.emb_dim = args.hidden_size
-        self.item_num = args.item_num
+        self.item_num = args.item_num+1
         self.batch_size = args.batch_size
         self.num_gpu = args.num_gpu
         self.user_num = args.user_num
@@ -192,15 +192,17 @@ class Att_Diffuse_model(nn.Module):
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
         self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
-        self.user_embeddings = nn.Embedding(self.user_num, self.emb_dim)
+        self.user_embeddings = nn.Embedding(self.item_num, self.emb_dim)
         # quadkey嵌入
         self.quadkey_embeddings = nn.Embedding(quadkey_vocab_size, self.emb_dim)
         self.tile_embeddings = nn.Embedding(tile_vocab_size, self.emb_dim, padding_idx=0)
         self.tile_to_poi = tile_to_poi  # 存储瓦片到POI的映射
 
         self.embed_dropout = nn.Dropout(args.emb_dropout)
+        self.uid_dropout = nn.Dropout(args.emb_dropout)
         self.position_embeddings = nn.Embedding(args.max_len, args.hidden_size)
         self.LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
+        self.uid_LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(args.dropout)
 
         self.top_k_tiles = args.top_k_tiles
@@ -234,9 +236,9 @@ class Att_Diffuse_model(nn.Module):
 
         self.tile_pos_enc = TilePosEnc(self.emb_dim, device=args.device)
         # 初始化 <unk> 嵌入,避免与填充向量（全零）混淆。
-        with torch.no_grad():
-            self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
-            self.tile_embeddings.weight[tile_vocab_size - 1].normal_(mean=0, std=0.1)  # <unk> 瓦片嵌入
+        # with torch.no_grad():
+        #     self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
+        #     self.tile_embeddings.weight[tile_vocab_size - 1].normal_(mean=0, std=0.1)  # <unk> 瓦片嵌入
 
     def diffu_pre(self, rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq):
         seq_rep_diffu, item_rep_out, weights, t, time_target, condition = self.diffu_poi(
@@ -364,11 +366,10 @@ class Att_Diffuse_model(nn.Module):
         # quadkey_embeds = quadkey_embeds.view(item_embeddings_origin.size(0), item_embeddings_origin.size(1), quadkey_embeds.size(1))  # 重塑为 [batch_size, seq_len, emb_dim]
         quadkey_embeds = None
 
-        poi_embeds = item_embeddings
         # 用户序列嵌入和编码
         user_embeds = self.user_embeddings(uids)
-        user_embeds = self.embed_dropout(user_embeds)  ## dropout first than layernorm
-        user_embeds = self.LayerNorm(user_embeds)  # 归一化
+        user_embeds = self.uid_dropout(user_embeds)  ## dropout first than layernorm
+        user_embeds = self.uid_LayerNorm(user_embeds)  # 归一化
         # 瓦片序列嵌入和编码
         # tile_embeds = self.tile_embeddings(tiles)
         # tile_embeds = self.embed_dropout(tile_embeds)  ## dropout first than layernorm
@@ -382,7 +383,7 @@ class Att_Diffuse_model(nn.Module):
         mask_seq = (items > 0).float()  # 这行代码的作用是生成一个掩码（mask），
         # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。float是把布尔值转化为0和1
         # 有一个关键的参数：最后一个值一定要是有效的，因为最后一个值是由目标时间和0组成的。
-        mask_seq[:, -1] = 1
+        # mask_seq[:, -1] = 1
 
         if train_flag:
             labels_emb = self.item_embeddings(labels.squeeze(-1))
@@ -391,9 +392,9 @@ class Att_Diffuse_model(nn.Module):
             #     tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
             # )
             poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target, condition = self.diffu_pre(
-                poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq
+                item_embeddings, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
-            return condition, (None, poi_rep_diffu), (None, poi_weights), (None, poi_t), None, None, (
+            return condition, poi_rep_diffu, (None, poi_weights), (None, poi_t), None, None, (
                 None, poi_time_target)
         else:
             # 推理模式：分别去噪
@@ -404,7 +405,7 @@ class Att_Diffuse_model(nn.Module):
             #     tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
             # )
             poi_rep_diffu, poi_time_target = self.reverse(
-                poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
+                item_embeddings, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
 
             # # 瓦片排序：生成Tile Ranking List
