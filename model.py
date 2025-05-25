@@ -57,92 +57,92 @@ class LayerNorm(nn.Module):
         x = (x - u) / torch.sqrt(s + self.variance_epsilon)
         return self.weight * x + self.bias
 
-class embedding(nn.Module):
-    """
-    自定义嵌入模块，用于将离散索引转换为连续的嵌入向量
-    """
-    def __init__(self, vocab_size, num_units, zeros_pad=True, scale=True):
-        """
-        初始化嵌入层
-        参数:
-            vocab_size: 词汇表大小（整数），表示输入的离散索引数量
-            num_units: 嵌入维度（整数），表示每个索引映射到的向量长度
-            zeros_pad: 布尔值，若为True，则将索引0的嵌入向量初始化为全零（通常用于填充）
-            scale: 布尔值，若为True，则输出嵌入向量会乘以嵌入维度的平方根（用于归一化）
-        """
-        super(embedding, self).__init__()  # 调用父类nn.Module的初始化方法
-        self.vocab_size = vocab_size  # 保存词汇表大小
-        self.num_units = num_units  # 保存嵌入维度
-        self.zeros_pad = zeros_pad  # 保存是否填充零的标志
-        self.scale = scale  # 保存是否缩放的标志
-        # 定义嵌入查找表，作为可训练参数，形状为 [vocab_size, num_units]
-        self.lookup_table = nn.Parameter(torch.Tensor(vocab_size, num_units))
-        # 使用Xavier正态分布初始化嵌入表
-        nn.init.xavier_normal_(self.lookup_table.data)
-        if self.zeros_pad:  # 如果需要填充零
-            self.lookup_table.data[0, :].fill_(0)  # 将索引0的嵌入向量设为全零
+# class embedding(nn.Module):
+#     """
+#     自定义嵌入模块，用于将离散索引转换为连续的嵌入向量
+#     """
+#     def __init__(self, vocab_size, num_units, zeros_pad=True, scale=True):
+#         """
+#         初始化嵌入层
+#         参数:
+#             vocab_size: 词汇表大小（整数），表示输入的离散索引数量
+#             num_units: 嵌入维度（整数），表示每个索引映射到的向量长度
+#             zeros_pad: 布尔值，若为True，则将索引0的嵌入向量初始化为全零（通常用于填充）
+#             scale: 布尔值，若为True，则输出嵌入向量会乘以嵌入维度的平方根（用于归一化）
+#         """
+#         super(embedding, self).__init__()  # 调用父类nn.Module的初始化方法
+#         self.vocab_size = vocab_size  # 保存词汇表大小
+#         self.num_units = num_units  # 保存嵌入维度
+#         self.zeros_pad = zeros_pad  # 保存是否填充零的标志
+#         self.scale = scale  # 保存是否缩放的标志
+#         # 定义嵌入查找表，作为可训练参数，形状为 [vocab_size, num_units]
+#         self.lookup_table = nn.Parameter(torch.Tensor(vocab_size, num_units))
+#         # 使用Xavier正态分布初始化嵌入表
+#         nn.init.xavier_normal_(self.lookup_table.data)
+#         if self.zeros_pad:  # 如果需要填充零
+#             self.lookup_table.data[0, :].fill_(0)  # 将索引0的嵌入向量设为全零
 
-    def forward(self, inputs):
-        """
-        前向传播，将输入索引转换为嵌入向量
-        参数:
-            inputs: 输入张量，包含离散索引，形状可以是任意（如 [N, L]）
-        返回:
-            outputs: 嵌入向量张量，形状为 [N, L, num_units]
-        """
-        if self.zeros_pad:  # 如果启用零填充
-            self.padding_idx = 0  # 设置填充索引为0
-        else:
-            self.padding_idx = -1  # 否则设置为-1（不填充）
+#     def forward(self, inputs):
+#         """
+#         前向传播，将输入索引转换为嵌入向量
+#         参数:
+#             inputs: 输入张量，包含离散索引，形状可以是任意（如 [N, L]）
+#         返回:
+#             outputs: 嵌入向量张量，形状为 [N, L, num_units]
+#         """
+#         if self.zeros_pad:  # 如果启用零填充
+#             self.padding_idx = 0  # 设置填充索引为0
+#         else:
+#             self.padding_idx = -1  # 否则设置为-1（不填充）
 
-        # 使用torch.nn.functional.embedding函数查找嵌入向量
-        outputs = F.embedding(
-            inputs,  # 输入索引张量
-            self.lookup_table,  # 嵌入查找表
-            self.padding_idx,  # 填充索引
-            None,  # max_norm，未使用
-            2,  # norm_type，未使用
-            False,  # scale_grad_by_freq，未使用
-            False  # sparse，未使用
-        )  # 参数设置参考torch.nn.modules.sparse.Embedding
+#         # 使用torch.nn.functional.embedding函数查找嵌入向量
+#         outputs = F.embedding(
+#             inputs,  # 输入索引张量
+#             self.lookup_table,  # 嵌入查找表
+#             self.padding_idx,  # 填充索引
+#             None,  # max_norm，未使用
+#             2,  # norm_type，未使用
+#             False,  # scale_grad_by_freq，未使用
+#             False  # sparse，未使用
+#         )  # 参数设置参考torch.nn.modules.sparse.Embedding
 
-        if self.scale:  # 如果需要缩放
-            outputs = outputs * (self.num_units ** 0.5)  # 乘以嵌入维度的平方根
+#         if self.scale:  # 如果需要缩放
+#             outputs = outputs * (self.num_units ** 0.5)  # 乘以嵌入维度的平方根
 
-        return outputs  # 返回嵌入结果
+#         return outputs  # 返回嵌入结果
 
-class PositionalEmbedding(nn.Module):
-    """
-    位置嵌入模块（可学习的位置编码）
-    """
+# class PositionalEmbedding(nn.Module):
+#     """
+#     位置嵌入模块（可学习的位置编码）
+#     """
 
-    def __init__(self, d_model, dropout=0.1, max_len=120):
-        """
-        初始化位置嵌入
-        参数:
-            d_model: 模型维度
-            dropout: Dropout概率，默认为0.1
-            max_len: 最大序列长度，默认为120
-        """
-        super(PositionalEmbedding, self).__init__()
-        # 定义可学习的位置嵌入表
-        self.pos_emb_table = embedding(max_len, d_model, zeros_pad=False, scale=False)
-        pos_vector = torch.arange(max_len)  # 生成位置索引 [0, 1, ..., max_len-1]
-        self.dropout = nn.Dropout(p=dropout)  # 定义Dropout层
-        self.register_buffer('pos_vector', pos_vector)  # 注册位置向量为缓冲区
+#     def __init__(self, d_model, dropout=0.1, max_len=120):
+#         """
+#         初始化位置嵌入
+#         参数:
+#             d_model: 模型维度
+#             dropout: Dropout概率，默认为0.1
+#             max_len: 最大序列长度，默认为120
+#         """
+#         super(PositionalEmbedding, self).__init__()
+#         # 定义可学习的位置嵌入表
+#         self.pos_emb_table = embedding(max_len, d_model, zeros_pad=False, scale=False)
+#         pos_vector = torch.arange(max_len)  # 生成位置索引 [0, 1, ..., max_len-1]
+#         self.dropout = nn.Dropout(p=dropout)  # 定义Dropout层
+#         self.register_buffer('pos_vector', pos_vector)  # 注册位置向量为缓冲区
 
-    def forward(self, x):
-        """
-        前向传播，添加位置嵌入
-        参数:
-            x: 输入张量，形状 [L, N, d_model]
-        返回:
-            添加位置嵌入并应用Dropout后的张量
-        """
-        # 获取位置嵌入并扩展到批次维度
-        pos_emb = self.pos_emb_table(self.pos_vector[:x.size(0)].unsqueeze(1).repeat(1, x.size(1)))
-        x += pos_emb  # 将位置嵌入加到输入上
-        return self.dropout(x)  # 应用Dropout
+#     def forward(self, x):
+#         """
+#         前向传播，添加位置嵌入
+#         参数:
+#             x: 输入张量，形状 [L, N, d_model]
+#         返回:
+#             添加位置嵌入并应用Dropout后的张量
+#         """
+#         # 获取位置嵌入并扩展到批次维度
+#         pos_emb = self.pos_emb_table(self.pos_vector[:x.size(0)].unsqueeze(1).repeat(1, x.size(1)))
+#         x += pos_emb  # 将位置嵌入加到输入上
+#         return self.dropout(x)  # 应用Dropout
 
 
 class TilePosEnc(nn.Module):
@@ -383,7 +383,7 @@ class Att_Diffuse_model(nn.Module):
         mask_seq = (items > 0).float()  # 这行代码的作用是生成一个掩码（mask），
         # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。float是把布尔值转化为0和1
         # 有一个关键的参数：最后一个值一定要是有效的，因为最后一个值是由目标时间和0组成的。
-        # mask_seq[:, -1] = 1
+        mask_seq[:, -1] = 1
 
         if train_flag:
             labels_emb = self.item_embeddings(labels.squeeze(-1))
