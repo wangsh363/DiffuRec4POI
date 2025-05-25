@@ -184,7 +184,7 @@ class Att_Diffuse_model(nn.Module):
     def __init__(self, diffu, args, quadkey_vocab_size, tile_vocab_size, tile_to_poi):
         super(Att_Diffuse_model, self).__init__()
         self.emb_dim = args.hidden_size
-        self.item_num = args.item_num+1
+        self.item_num = args.item_num
         self.batch_size = args.batch_size
         self.num_gpu = args.num_gpu
         self.user_num = args.user_num
@@ -192,7 +192,7 @@ class Att_Diffuse_model(nn.Module):
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
         self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
-        self.user_embeddings = nn.Embedding(self.item_num, self.emb_dim)
+        self.user_embeddings = nn.Embedding(self.user_num, self.emb_dim)
         # quadkey嵌入
         self.quadkey_embeddings = nn.Embedding(quadkey_vocab_size, self.emb_dim)
         self.tile_embeddings = nn.Embedding(tile_vocab_size, self.emb_dim, padding_idx=0)
