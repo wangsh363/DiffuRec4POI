@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
@@ -45,7 +45,7 @@ parser.add_argument('--diffusion_steps', type=int, default=32, help='Diffusion s
 parser.add_argument('--lambda_uncertainty', type=float, default=0.001, help='uncertainty weight')
 parser.add_argument('--noise_schedule', default='trunc_lin', help='Beta generation')  ## cosine, linear, trunc_cos, trunc_lin, pw_lin, sqrt
 parser.add_argument('--rescale_timesteps', default=True, help='rescal timesteps')
-parser.add_argument('--eval_interval', type=int, default=1, help='the number of epoch to eval')  # parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')
+parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')  # parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')
 parser.add_argument('--patience', type=int, default=5, help='the number of epoch to wait before early stop')
 parser.add_argument('--description', type=str, default='Diffu_norm_score', help='Model brief introduction')
 parser.add_argument('--long_head', default=False, help='Long and short sequence, head and long-tail items')

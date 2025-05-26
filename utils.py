@@ -279,7 +279,7 @@ class TrainDataset(data_utils.Dataset):
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
         # 预计算 quadkeys 和 tile_ids
-        self.precomputed_data = self._precompute_quadkeys_and_tiles()
+        # self.precomputed_data = self._precompute_quadkeys_and_tiles()
         # 预加载缓存功能
         # self.precomputed_data = self._load_precomputed_cache()
         # if self.precomputed_data is None:
@@ -365,12 +365,15 @@ class TrainDataset(data_utils.Dataset):
         items = [x[0] for x in tokens]
         timestamps = [x[1] for x in tokens]
         uids = [x[2] for x in tokens]
-        quadkeys, tile_ids, coords = self.precomputed_data[index]
-        unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
-        max_ngram_len = max(len(indices) for indices in quadkey_indices)
-        pad_index = self.quadkey_vocab['<pad>']
-        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        coords = [[x[3], x[4]] for x in tokens]
+        # quadkeys, tile_ids, coords = self.precomputed_data[index]
+        # unk_index = self.quadkey_vocab['<unk>']
+        # quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
+        # max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        # pad_index = self.quadkey_vocab['<pad>']
+        # quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        tile_ids = [self.poi_to_tile.get(key) for key in items]
+        quadkey_indices = []
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(uids),
@@ -439,7 +442,7 @@ class ValDataset(data_utils.Dataset):
         self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
-        self.precomputed_data = self._precompute_quadkeys_and_tiles()
+        # self.precomputed_data = self._precompute_quadkeys_and_tiles()
 
     def _precompute_quadkeys_and_tiles(self):
         """预计算所有序列的 quadkeys 和 tile_ids"""
@@ -502,12 +505,15 @@ class ValDataset(data_utils.Dataset):
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
         uids = [x[2] for x in seq]
-        quadkeys, tile_ids, coords = self.precomputed_data[index]
-        unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
-        max_ngram_len = max(len(indices) for indices in quadkey_indices)
-        pad_index = self.quadkey_vocab['<pad>']
-        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        # quadkeys, tile_ids, coords = self.precomputed_data[index]
+        coords = [[x[3], x[4]] for x in seq]
+        tile_ids = [self.poi_to_tile.get(key) for key in items]
+        # unk_index = self.quadkey_vocab['<unk>']
+        # quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
+        # max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        # pad_index = self.quadkey_vocab['<pad>']
+        # quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        quadkey_indices = []
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(uids),
@@ -566,7 +572,7 @@ class TestDataset(data_utils.Dataset):
         self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
-        self.precomputed_data = self._precompute_quadkeys_and_tiles()
+        # self.precomputed_data = self._precompute_quadkeys_and_tiles()
 
     def _precompute_quadkeys_and_tiles(self):
         """预计算所有序列的 quadkeys 和 tile_ids"""
@@ -629,16 +635,15 @@ class TestDataset(data_utils.Dataset):
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
         uids = [x[2] for x in seq]
-        quadkeys = []
-        tile_ids = []
-        coords = []
-        quadkeys, tile_ids, coords = self.precomputed_data[index]
-        unk_index = self.quadkey_vocab['<unk>']
-        quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk]
-                           for qk in quadkeys]
-        max_ngram_len = max(len(indices) for indices in quadkey_indices)
-        pad_index = self.quadkey_vocab['<pad>']
-        quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        # quadkeys, tile_ids, coords = self.precomputed_data[index]
+        coords = [[x[3], x[4]] for x in seq]
+        tile_ids = [self.poi_to_tile.get(key) for key in items]
+        # unk_index = self.quadkey_vocab['<unk>']
+        # quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
+        # max_ngram_len = max(len(indices) for indices in quadkey_indices)
+        # pad_index = self.quadkey_vocab['<pad>']
+        # quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
+        quadkey_indices = []
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
                 torch.LongTensor(uids),

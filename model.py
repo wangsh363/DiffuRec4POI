@@ -356,14 +356,15 @@ class Att_Diffuse_model(nn.Module):
         item_embeddings = self.LayerNorm(item_embeddings)  # 归一化
 
         # quadkey嵌入及自注意力
-        quadkey_embeds = self.quadkey_embeddings(quadkeys)  # [batch_size, seq_len, max_ngram_len, emb_dim]
-        quadkey_embeds = quadkey_embeds.view(quadkey_embeds.size(0)*quadkey_embeds.size(1), quadkey_embeds.size(2), quadkey_embeds.size(3)).permute(1, 0, 2)
-        # 添加位置编码,捕捉 n-gram token 在 Quadkey 序列（单个字符串）中的相对位置信息，Transformer模型对输入序列的顺序不敏感
-        quadkey_embeds = self.quadkey_pos_encoder(quadkey_embeds)
-        # Transformer 的自注意力机制可以捕捉 token 之间的复杂依赖关系
-        quadkey_embeds = self.quadkey_encoder(quadkey_embeds)
-        quadkey_embeds = torch.mean(quadkey_embeds, dim=0)  # 均值池化
-        quadkey_embeds = quadkey_embeds.view(item_embeddings_origin.size(0), item_embeddings_origin.size(1), quadkey_embeds.size(1))  # 重塑为 [batch_size, seq_len, emb_dim]
+        # quadkey_embeds = self.quadkey_embeddings(quadkeys)  # [batch_size, seq_len, max_ngram_len, emb_dim]
+        # quadkey_embeds = quadkey_embeds.view(quadkey_embeds.size(0)*quadkey_embeds.size(1), quadkey_embeds.size(2), quadkey_embeds.size(3)).permute(1, 0, 2)
+        # # 添加位置编码,捕捉 n-gram token 在 Quadkey 序列（单个字符串）中的相对位置信息，Transformer模型对输入序列的顺序不敏感
+        # quadkey_embeds = self.quadkey_pos_encoder(quadkey_embeds)
+        # # Transformer 的自注意力机制可以捕捉 token 之间的复杂依赖关系
+        # quadkey_embeds = self.quadkey_encoder(quadkey_embeds)
+        # quadkey_embeds = torch.mean(quadkey_embeds, dim=0)  # 均值池化
+        # quadkey_embeds = quadkey_embeds.view(item_embeddings_origin.size(0), item_embeddings_origin.size(1), quadkey_embeds.size(1))  # 重塑为 [batch_size, seq_len, emb_dim]
+        quadkey_embeds = None
 
         poi_embeds = item_embeddings
         # 用户序列嵌入和编码
@@ -461,6 +462,7 @@ class Att_Diffuse_model(nn.Module):
             mask = (candidate_poi_indices == self.PAD_IDX)
             poi_scores = poi_scores.masked_fill(mask, -1e9)  # [batch_size, max_candidates]
             _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
+            top_k_pois = torch.take_along_dim(candidate_poi_indices, top_k_pois, dim=1)
 
             return top_k_tiles, top_k_pois, poi_rep_diffu, tile_rep_diffu
 
