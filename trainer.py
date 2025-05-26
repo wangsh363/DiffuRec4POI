@@ -289,7 +289,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             _, indices = torch.topk(scores_rec_diffu, k=100)
             top_100_item.append(indices)
 
-            metrics = hrs_and_ndcgs_k(scores_rec_diffu, test_batch[1], metric_ks)
+            metrics = hrs_and_ndcgs_k(scores_rec_diffu, labels, metric_ks)
             for k, v in metrics.items():
                 test_metrics_dict[k].append(v)
             # valid_mask = labels.squeeze(-1) != unk_poi_id

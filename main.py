@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
@@ -161,14 +161,14 @@ def main(args):
     print(f"smap 键范围: [{min(smap.keys())}, {max(smap.keys())}], 值示例: {list(smap.values())[:5]}")
 
     # 添加 <unk> 索引
-    # max_poi_id = max(smap.keys()) if smap else 0
-    # unk_poi_id = max_poi_id + 1
-    # smap_reverse[-1] = unk_poi_id  # 用 -1 表示未知POI
-    # smap[unk_poi_id] = -1  # 反向映射
-    # print(f"添加 <unk> POI ID: {unk_poi_id}")
+    max_poi_id = max(smap.keys()) if smap else 0
+    unk_poi_id = max_poi_id + 1
+    smap_reverse[-1] = unk_poi_id  # 用 -1 表示未知POI
+    smap[unk_poi_id] = -1  # 反向映射
+    print(f"添加 <unk> POI ID: {unk_poi_id}")
 
     # num数量加了一个unk，来映射未知POI
-    args = item_num_create(args, max(smap.values()))
+    args = item_num_create(args, unk_poi_id + 1)
     data_raw['smap_reverse'] = smap_reverse
 
     # 计算用户数量
