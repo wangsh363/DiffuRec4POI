@@ -171,7 +171,7 @@ class Att_Diffuse_model(nn.Module):
         mask_seq = (sequence>0).float()  # 这行代码的作用是生成一个掩码（mask），
         # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。float是把布尔值转化为0和1
         # 有一个关键的参数：最后一个值一定要是有效的，因为最后一个值是由目标时间和0组成的。
-        mask_seq[:, -1] = 1
+        # mask_seq[:, -1] = 1
         
         if train_flag:  # 如果是训练模式
             tag_emb = self.item_embeddings(tag.squeeze(-1))  ## B x H   # 这个tag就是x0
