@@ -356,6 +356,7 @@ class ValDataset(data_utils.Dataset):
         seq = self.u2seq[user]
         raw_answer = self.u2answer[user][0][0]
         answer = self.smap_reverse.get(raw_answer, -1)
+        answer = [answer]
         unk_tile_id = self.tile_vocab_size - 1
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
