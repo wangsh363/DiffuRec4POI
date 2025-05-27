@@ -191,7 +191,7 @@ class Att_Diffuse_model(nn.Module):
         # 这是一个嵌入层。第一个参数是最大索引值，第二个参数是嵌入层维度。用来给物品id编码
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
-        self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
+        self.item_embeddings = nn.Embedding(self.item_num + 1, self.emb_dim)
         self.user_embeddings = nn.Embedding(self.user_num, self.emb_dim)
         # quadkey嵌入
         self.quadkey_embeddings = nn.Embedding(quadkey_vocab_size, self.emb_dim)
@@ -334,16 +334,16 @@ class Att_Diffuse_model(nn.Module):
 
         items, timestamps, uids, quadkeys, tiles = sequence
         # unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
-        # unk_poi_id = self.item_num - 1  # <unk> POI ID
+        unk_poi_id = self.item_num - 1  # <unk> POI ID
 
         # print("tile_vocab_size:", self.tile_vocab_size)
         # print("item_num:", self.item_num)
         # if tiles.max().item() >= self.tile_vocab_size or tiles.min().item() < 0:
         #     print(f"检测到无效瓦片 ID: min={tiles.min().item()}, max={tiles.max().item()}, 词汇表大小={self.tile_vocab_size}")
         #     tiles = torch.clamp(tiles, min=0, max=unk_tile_id)  # 映射到 <unk>
-        # if items.max().item() >= self.item_num or items.min().item() < 0:
-        #     print(f"检测到无效 items: min={items.min().item()}, max={items.max().item()}, item_num={self.item_num}")
-        #     items = torch.clamp(items, min=0, max=unk_poi_id)  # 映射到 <unk>
+        if items.max().item() >= self.item_num or items.min().item() < 0:
+            print(f"检测到无效 items: min={items.min().item()}, max={items.max().item()}, item_num={self.item_num}")
+            items = torch.clamp(items, min=0, max=unk_poi_id)  # 映射到 <unk>
         # 现在把sequence里的时间信息取出来
         # 理想的数据是这样的：
         # sequence为tuple3, 0是items([512, 50]), 1是timestamps([512, 50])， 2是quadkeys([512, 50, 12])
