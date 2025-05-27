@@ -421,7 +421,7 @@ class Diffu_xstart(nn.Module):
 
         # att: 注意力机制模块（Transformer_rep）
         self.att = Transformer_rep(args)
-        self.mlp_model = nn.Linear(self.hidden_size*3, self.hidden_size)
+        self.mlp_model = nn.Linear(self.hidden_size*2, self.hidden_size)
         self.mmlp_model = nn.Sequential(nn.Linear(self.hidden_size*3, self.hidden_size*6), nn.ReLU(), nn.Linear(self.hidden_size*6, self.hidden_size))
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, batch_first=True)
         # self.gru_model = nn.GRU(self.hidden_size, self.hidden_size, num_layers=args.num_blocks, batch_first=True)
@@ -457,112 +457,44 @@ class Diffu_xstart(nn.Module):
         return embedding
 
     def forward(self, rep_item, x_t, t, TimeStamp, mask_seq, item_tag):
-        # rep_item是历史交互序列嵌入，x_t是加噪后的目标向量，t是时间步，mask_seq是序列掩码
-        # (mask_seq不是位置编码，就只是一种掩码)
         emb_t = self.time_embed(self.timestep_embedding(t, self.hidden_size))  # 对时间步进行编码
-    
-        # 把用户向量和交互序列分开
+
         rep_item, rep_uid = torch.split(rep_item, 50, dim=1)
 
-
-
-        # 生成不确定性系数 lambda_uncertainty，即λ
         lambda_uncertainty = th.normal(mean=th.full(rep_item.shape, self.lambda_uncertainty), 
         std=th.full(rep_item.shape, self.lambda_uncertainty)).to(x_t.device)  ## distribution
 
-
-        # ####  Attention：把整理好的向量(z1,z2,...zn)放入tranformer中
-
-        # # 对时间戳进行编码
-        # # 首先把时间戳按照日和周来划分。初始时间向量的大小是：(batch_size, max_len)，我需要拆成同样大小的日向量和周向量
         formatted_times = [[datetime.fromtimestamp(ts) for ts in seq] for seq in TimeStamp.tolist()]
         norm_times = [[get_norm_time96(time) / 96 for time in row] for row in formatted_times]  # 时间归一化到[0,1]
         day_times = [[get_day_norm7(time)/7 for time in row] for row in formatted_times]  # 星期归一化到[0,1]
         input_seq_time = torch.tensor(norm_times,dtype=torch.float).to(x_t.device)   # [512, 50]
         input_seq_day_time = torch.tensor(day_times,dtype=torch.float).to(x_t.device)
 
-        # # 输入的大小为(batch_size, max_len)，输出的大小为(batch_size, max_len, hidden_size)
         time_emb_norm = self.time2vec(input_seq_time)  
         time_emb_day = self.time2vec_day(input_seq_day_time)
         time_target =(0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
 
-
-        # 将用户嵌入合并进来
-        # 用户和物品拼接后经过全连接层
+        rep_item = rep_item.clone()
+        rep_item[:, -1, :] = x_t
         rep_item_add_uid = torch.cat((rep_item, rep_uid), dim=2)
         rep_item = self.fc_item_uid_out(rep_item_add_uid)
 
-
-        # 原始代码
-        # x_t = x_t + emb_t
-        # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)  #  rep_diffu的大小是(512,50,128)
-        # 将时间向量和正常的向量进行合并
-        # rep_item[:, -1, :] = x_t   # 把最后一个空向量换成x_s
-        # x_t = x_t + emb_t
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day  # 大小是[512, 50, 128]，rep_diffu也是[512, 50, 128]
-        # 直接相加
-        # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
+
         rep_diffu = self.att(rep_item + time_emb_all , mask_seq)
-        # 和物品嵌入拼接之后经过全连接层
-        # rep_item_add_time = torch.cat((rep_item, time_emb_all), dim=2)
-        # rep_item_afteradd = self.fc_item_out(rep_item_add_time)
-        # rep_diffu = self.att(rep_item_afteradd + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)
-
-        
-
-
-        # # 使用旋转操作融合向量
-        # x_t = x_t + emb_t
-        # Rotate_tmp_norm = rotate_batch(rep_item + lambda_uncertainty * x_t.unsqueeze(1), 
-        # time_emb_norm, int(self.hidden_size / 2), x_t.device)
-        # Rotate_tmp_day = rotate_batch(rep_item + lambda_uncertainty * x_t.unsqueeze(1), 
-        # time_emb_day, int(self.hidden_size / 2), x_t.device)
-        # # 对日和周旋转融合后的向量加权
-        # Rotate_tmp = 0.7 * Rotate_tmp_norm + 0.3 * Rotate_tmp_day
-        # rep_diffu = self.att(Rotate_tmp, mask_seq)
 
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
 
-        # out就是重建后的x0，rep_diffu是(h1,h2,...,hn)
-        # out = rep_diffu[:, -1, :]
         out = rep_diffu[:, -1, :]
-        
-        # 用重建好的x0加上目标时间
-        out = out + time_target  # size是[512, 128])
+        # out = out + time_target  # size是[512, 128])
         condition = out
 
-        # 用旋转的方式
-        # out = rotate(out, time_target, int(self.hidden_size / 2), x_t.device)
-
-        # 用拼接的方式(沿第二维)
-        # out_add_time = torch.cat((out, time_target), dim=1)
-        # out = self.fc_out(out_add_time)
-
-
-        
-        ###############################################################################################################
-        
-        #### GRU
-        # output, hn = self.gru_model(rep_item + lambda_uncertainty * x_t.unsqueeze(1))
-        # output = self.norm_diffu_rep(self.dropout(output))
-        # out = output[:,-1,:]
-        ## # out = hn.squeeze(0)
-        # rep_diffu = None
-        ####
-        
-        ### MLP
-        combined = torch.cat([x_t, condition, emb_t], dim=1)
+        combined = torch.cat([condition, emb_t], dim=1)
         output = self.mlp_model(combined)
-        # output = self.mmlp_model(combined)
         output = self.norm_diffu_rep(self.dropout(output))
-        out = output
         rep_diffu = None
-        ###
-        
-        # out = out + self.lambda_uncertainty * x_t
-        # time_target = None
-        
-        return condition, rep_diffu, item_tag, time_target, condition
+
+        return output, rep_diffu, item_tag, time_target, condition
 
 
 class DiffuRec(nn.Module):

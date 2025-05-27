@@ -21,13 +21,13 @@ class TrainDataset(data_utils.Dataset):
         tokens = [[item[0], int(item[1].timestamp()), item[2]] for item in tokens]
         tokens = tokens[-self.max_len:]  # 保证 tokens 的长度不超过 max_len
         mask_len = self.max_len - len(tokens)  
-        # if mask_len > 0:
-        #     mask_len = mask_len - 1  # 序列最长就是50，所以这里减了1。后面使用的序列长度都将是1
-        # else:
-        #     tokens = tokens[1:]
+        if mask_len > 0:
+            mask_len = mask_len - 1  # 序列最长就是50，所以这里减了1。后面使用的序列长度都将是1
+        else:
+            tokens = tokens[1:]
 
-        # tokens = [[0, 0, 0]] * mask_len + tokens + [[0, int(last_time.timestamp()), last_uid]]  # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
-        tokens = [[0, 0, 0]] * mask_len + tokens
+        tokens = [[0, 0, 0]] * mask_len + tokens + [[0, int(last_time.timestamp()), last_uid]]  # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
+        # tokens = [[0, 0, 0]] * mask_len + tokens
         # tokens = [[0, 0, 0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0]]  # 计算序列长度与 max_len 的差值    # 使用零填充序列的前面部分，使其长度等于 max_len
 
         return torch.LongTensor(tokens), torch.LongTensor(labels)
@@ -83,12 +83,12 @@ class ValDataset(data_utils.Dataset):
         seq = [[item[0], int(item[1].timestamp()), item[2]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        # if padding_len > 0:
-        #     padding_len = padding_len - 1
-        # else:
-        #     seq = seq[1:]
-        seq = [[0, 0, 0]] * padding_len + seq
-        # seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0]]
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        # seq = [[0, 0, 0]] * padding_len + seq
+        seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid]]
 
         return torch.LongTensor(seq),  torch.LongTensor(answer)
 
@@ -128,12 +128,12 @@ class TestDataset(data_utils.Dataset):
         last_uid = self.u2answer[user][0][2]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
-        # if padding_len > 0:
-        #     padding_len = padding_len - 1
-        # else:
-        #     seq = seq[1:]
-        seq = [[0, 0, 0]] * padding_len + seq
-        # seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0]]
+        if padding_len > 0:
+            padding_len = padding_len - 1
+        else:
+            seq = seq[1:]
+        # seq = [[0, 0, 0]] * padding_len + seq
+        seq = [[0, 0, 0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid]]
 
 
         # print('attention！')
