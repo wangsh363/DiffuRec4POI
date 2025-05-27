@@ -361,7 +361,7 @@ class ValDataset(data_utils.Dataset):
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
-        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
+        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         # if padding_len > 0:
@@ -464,7 +464,7 @@ class TestDataset(data_utils.Dataset):
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
-        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
+        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         # if padding_len > 0:

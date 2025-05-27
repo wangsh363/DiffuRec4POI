@@ -208,8 +208,8 @@ class Att_Diffuse_model(nn.Module):
         self.top_k_tiles = args.top_k_tiles
         self.tile_vocab_size = tile_vocab_size
         self.top_k_pois = args.top_k_pois
-        self.arcface_loss_tile = ArcFaceLoss(margin=0.05, scale=64)  # 瓦片预测边距较小
-        self.arcface_loss_poi = ArcFaceLoss(margin=0.1, scale=64)  # POI预测边距较大
+        # self.arcface_loss_tile = ArcFaceLoss(margin=0.05, scale=64)  # 瓦片预测边距较小
+        # self.arcface_loss_poi = ArcFaceLoss(margin=0.1, scale=64)  # POI预测边距较大
 
         # 向quadkey添加自注意力机制
         # self.quadkey_enc_layer = TransformerEncoderLayer(
@@ -227,14 +227,14 @@ class Att_Diffuse_model(nn.Module):
         # self.quadkey_pos_encoder = PositionalEmbedding(self.emb_dim, dropout=0.5, max_len=12)
 
         # 分别创建两个扩散模型
-        self.diffu_tile = tile_pre(args)  # 用于瓦片序列
+        # self.diffu_tile = tile_pre(args)  # 用于瓦片序列
         self.diffu_poi = diffu  # 用于POI序列
 
         self.loss_ce = nn.CrossEntropyLoss()  # 交叉熵损失
         self.loss_ce_rec = nn.CrossEntropyLoss(reduction='none')
         self.loss_mse = nn.MSELoss()
 
-        self.tile_pos_enc = TilePosEnc(self.emb_dim, device=args.device)
+        # self.tile_pos_enc = TilePosEnc(self.emb_dim, device=args.device)
         # 初始化 <unk> 嵌入,避免与填充向量（全零）混淆。
         # with torch.no_grad():
         #     self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
@@ -348,8 +348,8 @@ class Att_Diffuse_model(nn.Module):
         # 理想的数据是这样的：
         # sequence为tuple3, 0是items([512, 50]), 1是timestamps([512, 50])， 2是quadkeys([512, 50, 12])
 
-        item_embeddings_origin = self.item_embeddings(items)  # 将离散的整数索引映射到连续的高维空间中
-        item_embeddings = self.embed_dropout(item_embeddings_origin)  ## dropout first than layernorm
+        item_embeddings = self.item_embeddings(items)  # 将离散的整数索引映射到连续的高维空间中
+        item_embeddings = self.embed_dropout(item_embeddings)  ## dropout first than layernorm
         # item_embeddings是历史交互序列的嵌入
 
         # item_embeddings = item_embeddings + position_embeddings
@@ -364,7 +364,7 @@ class Att_Diffuse_model(nn.Module):
         # quadkey_embeds = self.quadkey_encoder(quadkey_embeds)
         # quadkey_embeds = torch.mean(quadkey_embeds, dim=0)  # 均值池化
         # quadkey_embeds = quadkey_embeds.view(item_embeddings_origin.size(0), item_embeddings_origin.size(1), quadkey_embeds.size(1))  # 重塑为 [batch_size, seq_len, emb_dim]
-        quadkey_embeds = None
+        # quadkey_embeds = None
 
         # 用户序列嵌入和编码
         user_embeds = self.user_embeddings(uids)
@@ -392,20 +392,20 @@ class Att_Diffuse_model(nn.Module):
             #     tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
             # )
             poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target, condition = self.diffu_pre(
-                item_embeddings, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq
+                item_embeddings, labels_emb, timestamps, user_embeds, None, mask_seq
             )
             return condition, poi_rep_diffu, (None, poi_weights), (None, poi_t), None, None, (
                 None, poi_time_target)
         else:
             # 推理模式：分别去噪
-            noise_x_t_tile = th.randn_like(item_embeddings[:, -1, :])
+            # noise_x_t_tile = th.randn_like(item_embeddings[:, -1, :])
             noise_x_t_poi = th.randn_like(item_embeddings[:, -1, :])
             ######### 这个噪声是一样的吗，需不需要修改
             # tile_rep_diffu = self.diffu_tile(
             #     tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
             # )
             poi_rep_diffu, poi_time_target = self.reverse(
-                item_embeddings, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
+                item_embeddings, noise_x_t_poi, timestamps, user_embeds, None, mask_seq
             )
 
             # # 瓦片排序：生成Tile Ranking List

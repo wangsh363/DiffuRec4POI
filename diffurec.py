@@ -532,7 +532,7 @@ class Diffu_xstart(nn.Module):
         output = self.norm_diffu_rep(self.dropout(output))
         rep_diffu = None
 
-        return condition, rep_diffu, item_tag, time_target, condition
+        return output, rep_diffu, item_tag, time_target, condition
 
 
 class DiffuRec(nn.Module):
