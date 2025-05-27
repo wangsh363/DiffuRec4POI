@@ -6,7 +6,8 @@ import numpy as np
 import copy
 import time
 import pickle
-
+import os
+import random
 
 def optimizers(model, args):
     if args.optimizer.lower() == 'adam':
@@ -88,11 +89,43 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     bad_count = 0
 
 
-    # # 输出模型的可训练参数表
-    # print('注意')
-    # print("Model parameters count:", len(list(model_joint.parameters())))
-    # for name, param in model_joint.named_parameters():
-    #     print(f"{name}: requires_grad={param.requires_grad}")
+    # 进行用户测试前需要有已经训练好的模型 
+    # # 读取参数中的是否用户测试参数，如果是true，则随机选取用户列表的一些id，去预测这些id对应的id，并且给出真实的id进行对比。
+    # if args.user_result_test:
+    #     print("进行用户测试")
+    #     # 读取已经训练好的模型
+    #     test_model = model_joint
+    #     test_model.load_state_dict(torch.load('model\\best_model_gowalla.pth'))
+    #     test_model.to(device)  
+
+    #     # 使用test_model进行预测
+    #     # 选取一批数据
+    #     num_test_users = 10  # 测试10个用户
+    #     test_user_ids = random.sample(user_list, num_test_users)  # 随机抽取测试用户ID，userlist从umap里面读取
+    #     test_model.eval()
+    #     with torch.no_grad():
+    #         for user_id in test_user_ids:
+    #             # get_user_test_data(user_id)返回该用户的测试样本，这里需要的是用户真实对应的poi的id。
+    #             user_data = get_user_test_data(user_id)  # 返回 (input_seq, true_target) 格式
+    #             input_seq, true_target = user_data
+    #             input_seq = input_seq.to(device)
+    #             true_target = true_target.to(device)
+
+    #             # 模型预测
+    #             scores_rec, rep_diffu, _, _, _, _, time_target = test_model(input_seq.unsqueeze(0), true_target.unsqueeze(0), train_flag=False)
+    #             scores_rec_diffu = test_model.diffu_rep_pre(rep_diffu, time_target)
+
+    #             # 获取 Top-K 推荐
+    #             top_k = 10
+    #             _, top_k_indices = torch.topk(scores_rec_diffu, k=top_k) # 但是这里应该没办法直接返回物品id的？需要进一步处理。
+
+    #             # 打印预测结果与真实目标
+    #             print(f"用户ID: {user_id}")
+    #             print(f"Top-{top_k} 推荐结果: {top_k_indices.squeeze().tolist()}")
+    #             print(f"真实目标: {true_target.item()}")
+                # print('-' * 40)
+        
+
 
 
 
@@ -123,7 +156,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             # # print(time_target)
 
 
-            loss_diffu_value = model_joint.loss_diffu_ce(diffu_rep, train_batch[1])   # 目标物品本身加时间
+            loss_diffu_value = model_joint.loss_diffu_ce(diffu_rep, train_batch[1], time_target)   # 目标物品本身加时间
 
           
             loss_all = loss_diffu_value
@@ -149,8 +182,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 # metrics_dict_mean = {}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
-                    scores_rec, rep_diffu, _, _, _, _, _ = model_joint(val_batch[0], val_batch[1], train_flag=False)
-                    scores_rec_diffu = model_joint.diffu_rep_pre(rep_diffu)    ### inner_production
+                    scores_rec, rep_diffu, _, _, _, _, time_target = model_joint(val_batch[0], val_batch[1], train_flag=False)
+                    scores_rec_diffu = model_joint.diffu_rep_pre(rep_diffu, time_target)    ### inner_production
                     # scores_rec_diffu = model_joint.routing_rep_pre(rep_diffu)   ### routing_rep_pre
                     # 把正确答案提取一下
                     metrics = hrs_and_ndcgs_k(scores_rec_diffu, val_batch[1], metric_ks)
@@ -191,8 +224,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         test_metrics_dict_mean = {}
         for test_batch in test_data_loader:
             test_batch = [x.to(device) for x in test_batch]
-            scores_rec, rep_diffu, _, _, _, _, _ = best_model(test_batch[0], test_batch[1], train_flag=False)
-            scores_rec_diffu = best_model.diffu_rep_pre(rep_diffu)   ### Inner Production
+            scores_rec, rep_diffu, _, _, _, _, time_target = best_model(test_batch[0], test_batch[1], train_flag=False)
+            scores_rec_diffu = best_model.diffu_rep_pre(rep_diffu,  time_target)   ### Inner Production
             # scores_rec_diffu = best_model.routing_rep_pre(rep_diffu)   ### routing
             
             _, indices = torch.topk(scores_rec_diffu, k=100)
@@ -215,6 +248,18 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     print(best_epoch)
     logger.info(best_metrics_dict)
     logger.info(best_epoch)
+
+
+    print('saving model...')
+    # 模型保存目录
+    save_dir = 'model' 
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    # 保存最好的模型参数
+    best_model_path = os.path.join(save_dir, 'best_model_' + args.dataset + '.pth')
+    torch.save(best_model.state_dict(), best_model_path)
+    logger.info(f"Best model saved at {best_model_path}")
+
 
     print(args)
 
