@@ -486,7 +486,7 @@ class Diffu_xstart(nn.Module):
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
 
         out = rep_diffu[:, -1, :]
-        # out = out + time_target  # size是[512, 128])
+        out = out + time_target  # size是[512, 128])
         condition = out
 
         combined = torch.cat([condition, emb_t], dim=1)
