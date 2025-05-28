@@ -549,7 +549,7 @@ class Diffu_xstart(nn.Module):
         out = rep_diffu[:, -2, :]
         
         # 用重建好的x0加上目标时间
-        # out = out + time_target  # size是[512, 128])
+        out = out + time_target  # size是[512, 128])
 
         # 用旋转的方式
         # out = rotate(out, time_target, int(self.hidden_size / 2), x_t.device)
