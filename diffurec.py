@@ -383,20 +383,10 @@ class Transformer_rep(nn.Module):
         # 一个包含多个 TransformerBlock 的模块列表，每个块都是一个独立的 Transformer 编码器。
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(self.hidden_size, self.heads, self.dropout) for _ in range(self.n_blocks)])
-        self.max_len = args.max_len  # 设置最大序列长度
-        self.position_embedding = nn.Embedding(self.max_len, self.hidden_size)
 
     def forward(self, hidden, mask):
         # hidden: 输入的特征表示，形状为 (batch_size, seq_len, hidden_size)。
         # mask: 序列掩码，形状为 (batch_size, seq_len)，用于标识哪些位置是有效的（非填充值）。
-        batch_size, seq_len, _ = hidden.size()
-        device = hidden.device
-        # 构造位置索引
-        position_ids = torch.arange(seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(batch_size, seq_len)
-        # 添加位置编码
-        position_embeddings = self.position_embedding(position_ids)
-        hidden = hidden + position_embeddings
-
         for transformer in self.transformer_blocks:
             hidden = transformer.forward(hidden, mask)
         # 返回经过所有 Transformer 块编码后的 hidden。形状不变。
@@ -495,7 +485,7 @@ class Diffu_xstart(nn.Module):
 
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
 
-        out = rep_diffu[:, -2, :]
+        out = rep_diffu[:, -1, :]
         out = out + time_target  # size是[512, 128])
         condition = out
 
@@ -504,7 +494,7 @@ class Diffu_xstart(nn.Module):
         output = self.norm_diffu_rep(self.dropout(output))
         rep_diffu = None
 
-        return condition, rep_diffu, item_tag, time_target, condition
+        return output, rep_diffu, item_tag, time_target, condition
 
 
 class DiffuRec(nn.Module):
