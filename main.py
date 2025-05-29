@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 
 parser = argparse.ArgumentParser()
@@ -151,8 +151,8 @@ def main(args):
     # cold_hot_long_short(data_raw, args.dataset)
     
     # args = item_num_create(args, len(data_raw['smap']))  # 根据smap的长度确定最大编号
-    args = item_num_create(args, max(data_raw['smap'].values()))  # 换成根据smap最大
-    args = user_num_create(args, max(data_raw['umap'].values()))
+    args = item_num_create(args, data_raw['num_poi'])  # 换成根据smap最大
+    args = user_num_create(args, data_raw['num_user'])
     
     # 转换一下时间格式，字符串-->时间
     # 将时间字符串转换为 datetime 对象
