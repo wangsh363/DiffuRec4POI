@@ -7,6 +7,7 @@ import copy
 import numpy as np
 from step_sample import LossAwareSampler
 import torch as th
+from torch_geometric.nn import SAGEConv
 
 
 class LayerNorm(nn.Module):
@@ -25,15 +26,47 @@ class LayerNorm(nn.Module):
         return self.weight * x + self.bias
 
 
+class POIGraphEncoder(nn.Module):
+    def __init__(self, num_poi, embed_dim, hidden_dim):
+        super().__init__()
+        self.poi_features = nn.Embedding(num_poi, embed_dim)  # 初始节点特征
+        self.gnn1 = SAGEConv(embed_dim, hidden_dim)
+        self.ln1 = nn.LayerNorm(embed_dim)
+        self.gnn2 = SAGEConv(hidden_dim, hidden_dim)
+        self.ln2 = nn.LayerNorm(embed_dim)
+        self.dropout = nn.Dropout(p=0.5)
+
+    def forward(self, edge_index, edge_weight=None):
+        x = self.poi_features.weight                      # shape: [num_poi, embed_dim]
+        device = x.device
+        edge_index = edge_index.to(device)
+        if edge_weight is not None:
+            edge_weight = edge_weight.to(device).float()
+        
+        # x = self.gnn1(x, edge_index, edge_weight)
+        # x = self.ln1(x)
+        # x = F.relu(x)
+        # x = self.dropout(x)
+        # x = self.gnn2(x, edge_index, edge_weight)
+        # x = self.ln2(x)
+        # x = F.relu(x)
+        # x = self.dropout(x)
+
+        x = self.gnn1(x, edge_index, edge_weight)
+        x = F.relu(x)
+        x = self.gnn2(x, edge_index, edge_weight)
+        return x  # shape: [num_poi, hidden_dim]
+
+
 class Att_Diffuse_model(nn.Module):
     def __init__(self, diffu, args):
         super(Att_Diffuse_model, self).__init__()
         self.emb_dim = args.hidden_size
-        self.item_num = args.item_num+1
+        self.item_num = args.item_num
         # 这是一个嵌入层。第一个参数是最大索引值，第二个参数是嵌入层维度。用来给物品id编码
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
-        self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
+        # self.item_embeddings = nn.Embedding(self.item_num, self.emb_dim)
         self.embed_dropout = nn.Dropout(args.emb_dropout)
         self.position_embeddings = nn.Embedding(args.max_len, args.hidden_size)
         self.LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
@@ -44,11 +77,25 @@ class Att_Diffuse_model(nn.Module):
         self.loss_mse = nn.MSELoss()
 
         # 新增的用户id编码层
-        self.user_num = args.user_num + 1
+        self.user_num = args.user_num
         self.uid_embeddings = nn.Embedding(self.user_num, self.emb_dim)
         self.uid_dropout = nn.Dropout(args.emb_dropout)
         self.uid_LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
 
+        self.poi_encoder = POIGraphEncoder(self.item_num, self.emb_dim, self.emb_dim)
+        self.edge_index = None
+        self.edge_weight = None
+        self.poi_repr = None
+
+    def set_graph(self, edge_index, edge_weight):
+        self.edge_index = edge_index
+        self.edge_weight = edge_weight
+    
+    def get_poi_repr(self, use_cache=False):
+        if use_cache and hasattr(self, "poi_repr"):
+            return self.poi_repr
+        else:
+            return self.poi_encoder(self.edge_index, self.edge_weight)
 
     def diffu_pre(self, item_rep, tag_emb, TimeStamp, mask_seq):
         seq_rep_diffu, item_rep_out, weights, t, time_target  = self.diffu(item_rep, tag_emb, TimeStamp, mask_seq)
@@ -62,7 +109,7 @@ class Att_Diffuse_model(nn.Module):
         return self.loss_ce(scores, labels.squeeze(-1))
 
     def loss_diffu(self, rep_diffu, labels):
-        scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())
+        scores = torch.matmul(rep_diffu, self.get_poi_repr().t())
         scores_pos = scores.gather(1 , labels)  ## labels: b x 1
         scores_neg_mean = (torch.sum(scores, dim=-1).unsqueeze(-1)-scores_pos)/(scores.shape[1]-1)
       
@@ -85,7 +132,7 @@ class Att_Diffuse_model(nn.Module):
         # tmp = tmp.permute(0, 2, 1)  # [512, 128, 9690]
         # scores = torch.matmul(rep_diffu.unsqueeze(1), tmp).squeeze(1)  # 结果为 512 × 9690
 
-        scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  # 对self.item_embeddings.weight.t() 进行时间的改变
+        scores = torch.matmul(rep_diffu, self.get_poi_repr().t())  # 对self.item_embeddings.weight.t() 进行时间的改变
         """
         ### norm scores
         item_emb_norm = F.normalize(self.item_embeddings.weight, dim=-1)
@@ -104,18 +151,18 @@ class Att_Diffuse_model(nn.Module):
         # tmp = tmp.permute(0, 2, 1)  # [512, 128, 9690]
         # scores = torch.matmul(rep_diffu.unsqueeze(1), tmp).squeeze(1)  # 结果为 512 × 9690
 
-        scores = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  # 计算rep_difffu与所有物品的相似度，也就是每个物品的匹配分数
+        scores = torch.matmul(rep_diffu, self.get_poi_repr().t())  # 计算rep_difffu与所有物品的相似度，也就是每个物品的匹配分数
         # 计算前后两个向量的相似度得分。后面这个weight好像是可学习的参数矩阵
         return scores
     
     def loss_rmse(self, rep_diffu, labels):
-        rep_gt = self.item_embeddings(labels).squeeze(1)
+        rep_gt = self.get_poi_repr()[labels].squeeze(1)
         return torch.sqrt(self.loss_mse(rep_gt, rep_diffu))
     
     def routing_rep_pre(self, rep_diffu):
-        item_norm = (self.item_embeddings.weight**2).sum(-1).view(-1, 1)  ## N x 1
+        item_norm = (self.get_poi_repr()**2).sum(-1).view(-1, 1)  ## N x 1
         rep_norm = (rep_diffu**2).sum(-1).view(-1, 1)  ## B x 1
-        sim = torch.matmul(rep_diffu, self.item_embeddings.weight.t())  ## B x N
+        sim = torch.matmul(rep_diffu, self.get_poi_repr().t())  ## B x N
         dist = rep_norm + item_norm.transpose(0, 1) - 2.0 * sim
         dist = torch.clamp(dist, 0.0, np.inf)
         
@@ -150,11 +197,14 @@ class Att_Diffuse_model(nn.Module):
         uid_sequence = sequence[..., 2]  # 第三个值
         sequence = sequence[..., 0]  # 取最后一维的第一个值
 
+        poi_emb_all = self.poi_encoder(self.edge_index, self.edge_weight)  # [num_poi, dim]
+        item_embeddings = poi_emb_all[sequence]                                     # [batch_size, dim]
+
         # 历史交互物品编码
-        item_embeddings = self.item_embeddings(sequence)  # 将离散的整数索引映射到连续的高维空间中
-        item_embeddings = self.embed_dropout(item_embeddings)  ## dropout first than layernorm
-        # item_embeddings = item_embeddings + position_embeddings
-        item_embeddings = self.LayerNorm(item_embeddings)  # 归一化
+        # item_embeddings = self.item_embeddings(sequence)  # 将离散的整数索引映射到连续的高维空间中
+        # item_embeddings = self.embed_dropout(item_embeddings)  ## dropout first than layernorm
+        # # item_embeddings = item_embeddings + position_embeddings
+        # item_embeddings = self.LayerNorm(item_embeddings)  # 归一化
 
         # 用户id编码
         uid_embeddings = self.uid_embeddings(uid_sequence) 
@@ -172,7 +222,7 @@ class Att_Diffuse_model(nn.Module):
         mask_seq[:, -1] = 1
         
         if train_flag:  # 如果是训练模式
-            tag_emb = self.item_embeddings(tag.squeeze(-1))  ## B x H   # 这个tag就是x0
+            tag_emb = poi_emb_all[tag.squeeze(-1)]  ## B x H   # 这个tag就是x0
             rep_diffu, rep_item, weights, t, time_target = self.diffu_pre(item_embeddings, tag_emb, last_timestamp, mask_seq)  # 进行扩散
             # 输入的分别是：历史交互序列的嵌入表示、tag(就是x0)、交互时间、掩码。为了方便，用户的嵌入也一并放到了item_emdeddings里
             # 输出的分别是：

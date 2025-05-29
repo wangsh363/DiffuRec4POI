@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 
 parser = argparse.ArgumentParser()
@@ -172,7 +172,15 @@ def main(args):
     test_data_loader = test_data.get_pytorch_dataloaders()
     diffu_rec = create_model_diffu(args)
     rec_diffu_joint_model = Att_Diffuse_model(diffu_rec, args)
-    
+
+    edge_index = data_raw['edge_index']
+    edge_weight = data_raw['edge_weight']
+    edge_weight = edge_weight + 1e-6
+    edge_weight = edge_weight / edge_weight.sum()
+    edge_weight = edge_weight.float()
+
+    rec_diffu_joint_model.set_graph(edge_index, None)
+
     best_model, test_results = model_train(tra_data_loader, val_data_loader, test_data_loader, rec_diffu_joint_model, args, logger)
 
 
