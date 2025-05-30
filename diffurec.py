@@ -367,7 +367,7 @@ class TransformerBlock(nn.Module):
         self.output_sublayer = SublayerConnection(hidden_size=hidden_size, dropout=dropout)
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, hidden, mask,  q_input, k_input, v_input):
+    def forward(self, hidden, mask):
         hidden = self.input_sublayer(hidden, lambda _hidden: self.attention.forward(_hidden, _hidden, _hidden, mask=mask))
         # 上面的代码等价于下面的两行：
         # attention_output = self.attention.forward(hidden, hidden, hidden, mask=mask)
@@ -393,11 +393,11 @@ class Transformer_rep(nn.Module):
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(self.hidden_size, self.heads, self.dropout) for _ in range(self.n_blocks)])
 
-    def forward(self, hidden, mask, q_input, k_input, v_input):
+    def forward(self, hidden, mask):
         # hidden: 输入的特征表示，形状为 (batch_size, seq_len, hidden_size)。
         # mask: 序列掩码，形状为 (batch_size, seq_len)，用于标识哪些位置是有效的（非填充值）。
         for transformer in self.transformer_blocks:
-            hidden = transformer.forward(hidden, mask, q_input, k_input, v_input)
+            hidden = transformer.forward(hidden, mask)
         # 返回经过所有 Transformer 块编码后的 hidden。形状不变。
         return hidden
 
@@ -426,6 +426,7 @@ class Diffu_xstart(nn.Module):
         # self.fc_item_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
 
         # 新增的全连接层，用于把物品的时间与用户的嵌入的拼接输出成新嵌入
+        self.mlp_model = nn.Linear(self.hidden_size*2, self.hidden_size)
         self.fc_item_uid_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
 
         # att: 注意力机制模块（Transformer_rep）
@@ -494,7 +495,8 @@ class Diffu_xstart(nn.Module):
         time_emb_day = self.time2vec_day(input_seq_day_time)
         time_target =(0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
 
-
+        # rep_item = rep_item.clone()
+        # rep_item[:, -1, :] = x_t
         # 将用户嵌入合并进来
         # 用户和物品拼接后经过全连接层
         rep_item_add_uid = torch.cat((rep_item, rep_uid), dim=2)
@@ -506,21 +508,21 @@ class Diffu_xstart(nn.Module):
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)  #  rep_diffu的大小是(512,50,128)
         # 将时间向量和正常的向量进行合并
         # rep_item[:, -1, :] = x_t   # 把最后一个空向量换成x_s
-        x_t = x_t + emb_t
+        # x_t = x_t + emb_t
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day  # 大小是[512, 50, 128]，rep_diffu也是[512, 50, 128]
         
         # 准备qkv
-        q_input =  rep_uid + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）  
+        # q_input =  rep_uid + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）  
         # 一个改进：可以把下面的lambda_uncertainty * x_t.unsqueeze(1)移到上面来。下面不含当前时间，时间的最后一列是0。把当前时间加到上面去。
-        k_input =  rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all # poi加交互时间
-        v_input =  rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all # poi加交互时间
+        # k_input =  rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all # poi加交互时间
+        # v_input =  rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all # poi加交互时间
 
         # q_input =  rep_item + time_emb_all # poi加交互时间  
         # k_input =  rep_uid + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）
         # v_input =  rep_uid + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）
 
         # 直接相加-qkv版本
-        rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq, q_input, k_input, v_input)
+        rep_diffu = self.att(rep_item + time_emb_all, mask_seq)
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq, q_input, k_input, v_input)
         # 直接相加
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
@@ -549,7 +551,9 @@ class Diffu_xstart(nn.Module):
         out = rep_diffu[:, -2, :]
         
         # 用重建好的x0加上目标时间
-        out = out + time_target  # size是[512, 128])
+        # out = out + time_target  # size是[512, 128])
+        # combined = torch.cat([out, emb_t], dim=1)
+        # out = self.mlp_model(combined)
 
         # 用旋转的方式
         # out = rotate(out, time_target, int(self.hidden_size / 2), x_t.device)
