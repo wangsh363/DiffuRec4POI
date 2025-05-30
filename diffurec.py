@@ -495,8 +495,11 @@ class Diffu_xstart(nn.Module):
         time_emb_day = self.time2vec_day(input_seq_day_time)
         time_target =(0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
 
-        # rep_item = rep_item.clone()
-        # rep_item[:, -1, :] = x_t
+        # combined = torch.cat([x_t, emb_t], dim=1)
+        # x_t = self.mlp_model(combined)
+
+        rep_item = rep_item.clone()
+        rep_item[:, -1, :] = x_t
         # 将用户嵌入合并进来
         # 用户和物品拼接后经过全连接层
         rep_item_add_uid = torch.cat((rep_item, rep_uid), dim=2)
@@ -522,7 +525,7 @@ class Diffu_xstart(nn.Module):
         # v_input =  rep_uid + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）
 
         # 直接相加-qkv版本
-        rep_diffu = self.att(rep_item + time_emb_all, mask_seq)
+        rep_diffu = self.att(rep_item + time_emb_all + lambda_uncertainty * emb_t, mask_seq)
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq, q_input, k_input, v_input)
         # 直接相加
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
