@@ -497,9 +497,18 @@ class Diffu_xstart(nn.Module):
 
         # combined = torch.cat([x_t, emb_t], dim=1)
         # x_t = self.mlp_model(combined)
+        x_t = x_t + emb_t
 
-        rep_item = rep_item.clone()
-        rep_item[:, -1, :] = x_t
+        # with torch.no_grad():
+        #     rep_item = rep_item.clone()
+        #     rep_item[:, -1, :] = x_t
+        # with torch.no_grad():
+        #     delta = torch.zeros_like(rep_item)
+        #     delta[:, -1, :] = lambda_uncertainty[:, -1, :] * x_t
+        #     rep_item = rep_item + delta
+        delta = torch.zeros_like(rep_item)
+        delta[:, -1, :] = lambda_uncertainty[:, -1, :] * x_t
+        rep_item = rep_item + delta
         # 将用户嵌入合并进来
         # 用户和物品拼接后经过全连接层
         rep_item_add_uid = torch.cat((rep_item, rep_uid), dim=2)
@@ -525,7 +534,7 @@ class Diffu_xstart(nn.Module):
         # v_input =  rep_uid + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）
 
         # 直接相加-qkv版本
-        rep_diffu = self.att(rep_item + time_emb_all + lambda_uncertainty * emb_t, mask_seq)
+        rep_diffu = self.att(rep_item + time_emb_all, mask_seq)
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq, q_input, k_input, v_input)
         # 直接相加
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
