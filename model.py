@@ -199,6 +199,7 @@ class Att_Diffuse_model(nn.Module):
 
         poi_emb_all = self.poi_encoder(self.edge_index, self.edge_weight)  # [num_poi, dim]
         item_embeddings = poi_emb_all[sequence]                                     # [batch_size, dim]
+        item_embeddings[:, -1] = 0.0
 
         # 历史交互物品编码
         # item_embeddings = self.item_embeddings(sequence)  # 将离散的整数索引映射到连续的高维空间中
