@@ -329,7 +329,7 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, heads, hidden_size, dropout):
+    def __init__(self, heads, hidden_size, dropout):  # 代码里有4个头
         super().__init__()
         assert hidden_size % heads == 0
         self.size_head = hidden_size // heads
@@ -367,8 +367,17 @@ class TransformerBlock(nn.Module):
         self.output_sublayer = SublayerConnection(hidden_size=hidden_size, dropout=dropout)
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, hidden, mask):
+    def forward(self, hidden, mask,  q_input, k_input, v_input):
         hidden = self.input_sublayer(hidden, lambda _hidden: self.attention.forward(_hidden, _hidden, _hidden, mask=mask))
+        # 上面的代码等价于下面的两行：
+        # attention_output = self.attention.forward(hidden, hidden, hidden, mask=mask)
+        # hidden = self.input_sublayer(hidden, attention_output)  # 假设 input_sublayer 支持这种调用
+
+        # 把三个一样的输入改成不同的输入。
+        # q_input, k_input, v_input
+        # hidden = self.input_sublayer(hidden, lambda _: self.attention.forward(q_input, k_input, v_input, mask=mask))
+
+
         hidden = self.output_sublayer(hidden, self.feed_forward)
         return self.dropout(hidden)
 
@@ -384,11 +393,11 @@ class Transformer_rep(nn.Module):
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(self.hidden_size, self.heads, self.dropout) for _ in range(self.n_blocks)])
 
-    def forward(self, hidden, mask):
+    def forward(self, hidden, mask, q_input, k_input, v_input):
         # hidden: 输入的特征表示，形状为 (batch_size, seq_len, hidden_size)。
         # mask: 序列掩码，形状为 (batch_size, seq_len)，用于标识哪些位置是有效的（非填充值）。
         for transformer in self.transformer_blocks:
-            hidden = transformer.forward(hidden, mask)
+            hidden = transformer.forward(hidden, mask, q_input, k_input, v_input)
         # 返回经过所有 Transformer 块编码后的 hidden。形状不变。
         return hidden
 
@@ -415,6 +424,9 @@ class Diffu_xstart(nn.Module):
 
         # 新增的全连接层，用于把物品的时间与物品的嵌入的拼接输出成物品的新嵌入
         # self.fc_item_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
+
+        # 新增的全连接层，用于把物品的时间与用户的嵌入的拼接输出成新嵌入
+        self.fc_item_uid_out = nn.Linear(self.hidden_size * 2, self.hidden_size)
 
         # att: 注意力机制模块（Transformer_rep）
         self.att = Transformer_rep(args)
@@ -456,14 +468,15 @@ class Diffu_xstart(nn.Module):
         # rep_item是历史交互序列嵌入，x_t是加噪后的目标向量，t是时间步，mask_seq是序列掩码
         # (mask_seq不是位置编码，就只是一种掩码)
         emb_t = self.time_embed(self.timestep_embedding(t, self.hidden_size))  # 对时间步进行编码
-        # print(x_t.size())  # torch.Size([512, 128])
-        # print(x_t.unsqueeze(1).size())  # torch.Size([512, 1, 128])
-        # x_t = x_t + emb_t 
-                
+    
+        # 把用户向量和交互序列分开
+        rep_item, rep_uid = torch.split(rep_item, 50, dim=1)
+
+
+
         # 生成不确定性系数 lambda_uncertainty，即λ
         lambda_uncertainty = th.normal(mean=th.full(rep_item.shape, self.lambda_uncertainty), 
         std=th.full(rep_item.shape, self.lambda_uncertainty)).to(x_t.device)  ## distribution
-        # 如果要创建系数的话。miu_uncertainty是时间的不确定性系数
 
 
         # ####  Attention：把整理好的向量(z1,z2,...zn)放入tranformer中
@@ -482,31 +495,41 @@ class Diffu_xstart(nn.Module):
         time_target =(0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
 
 
+        # 将用户嵌入合并进来
+        # 用户和物品拼接后经过全连接层
+        # rep_item_add_uid = torch.cat((rep_item, rep_uid), dim=2)
+        # rep_item = self.fc_item_uid_out(rep_item_add_uid)
+
+
         # 原始代码
         # x_t = x_t + emb_t
         # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)  #  rep_diffu的大小是(512,50,128)
-
         # 将时间向量和正常的向量进行合并
         # rep_item[:, -1, :] = x_t   # 把最后一个空向量换成x_s
         x_t = x_t + emb_t
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day  # 大小是[512, 50, 128]，rep_diffu也是[512, 50, 128]
+        
+        # 准备qkv
+        q_input =  rep_uid + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）  
+        # 一个改进：可以把下面的lambda_uncertainty * x_t.unsqueeze(1)移到上面来。下面不含当前时间，时间的最后一列是0。把当前时间加到上面去。
+        k_input =  rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all # poi加交互时间
+        v_input =  rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all # poi加交互时间
+
+        # q_input =  rep_item + time_emb_all # poi加交互时间  
+        # k_input =  rep_uid + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）
+        # v_input =  rep_uid + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all  # 用户向量加当前时间（这里用的是所有的时间）
+
+        # 直接相加-qkv版本
+        rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1), mask_seq, q_input, k_input, v_input)
+        # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq, q_input, k_input, v_input)
         # 直接相加
-        rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
+        # rep_diffu = self.att(rep_item + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all , mask_seq)
         # 和物品嵌入拼接之后经过全连接层
-        # rep_item_add_time = torch.cat((rep_item, time_emb_all), dim=2)
+        # rep_item_add_time = torch.cat((rep_item, time_emb_all), dim=2)    
         # rep_item_afteradd = self.fc_item_out(rep_item_add_time)
         # rep_diffu = self.att(rep_item_afteradd + lambda_uncertainty * x_t.unsqueeze(1), mask_seq)
 
-
-        # # 使用旋转操作融合向量
-        # x_t = x_t + emb_t
-        # Rotate_tmp_norm = rotate_batch(rep_item + lambda_uncertainty * x_t.unsqueeze(1), 
-        # time_emb_norm, int(self.hidden_size / 2), x_t.device)
-        # Rotate_tmp_day = rotate_batch(rep_item + lambda_uncertainty * x_t.unsqueeze(1), 
-        # time_emb_day, int(self.hidden_size / 2), x_t.device)
-        # # 对日和周旋转融合后的向量加权
-        # Rotate_tmp = 0.7 * Rotate_tmp_norm + 0.3 * Rotate_tmp_day
-        # rep_diffu = self.att(Rotate_tmp, mask_seq)
+    
 
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
 
@@ -515,10 +538,7 @@ class Diffu_xstart(nn.Module):
         out = rep_diffu[:, -2, :]
         
         # 用重建好的x0加上目标时间
-        out = out + time_target  # size是[512, 128])
-
-        # 用旋转的方式
-        # out = rotate(out, time_target, int(self.hidden_size / 2), x_t.device)
+        # out = out + time_target  # size是[512, 128])
 
         # 用拼接的方式(沿第二维)
         # out_add_time = torch.cat((out, time_target), dim=1)

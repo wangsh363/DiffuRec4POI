@@ -79,6 +79,9 @@ def item_num_create(args, item_num):
     args.item_num = item_num
     return args
 
+def user_num_create(args, user_num):
+    args.user_num = user_num
+    return args
 
 def cold_hot_long_short(data_raw, dataset_name):
     item_list = []
@@ -141,7 +144,7 @@ def cold_hot_long_short(data_raw, dataset_name):
 
 def main(args):    
     fix_random_seed_as(args.random_seed)
-    path_data = './datasets/data/' + args.dataset + '/dataset.pkl'
+    path_data = '../datasets/data/' + args.dataset + '/dataset.pkl'
     with open(path_data, 'rb') as f:
         data_raw = pickle.load(f)
     
@@ -149,15 +152,16 @@ def main(args):
     
     # args = item_num_create(args, len(data_raw['smap']))  # 根据smap的长度确定最大编号
     args = item_num_create(args, max(data_raw['smap'].values()))  # 换成根据smap最大
+    args = user_num_create(args, max(data_raw['umap'].values()))
     
     # 转换一下时间格式，字符串-->时间
     # 将时间字符串转换为 datetime 对象
     for key, value in data_raw['train'].items():
-        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid) for poi, time_str, uid in value]
     for key, value in data_raw['val'].items():
-        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid) for poi, time_str, uid in value]
     for key, value in data_raw['test'].items():
-        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid) for poi, time_str, uid in value]
         
     tra_data = Data_Train(data_raw['train'], args)  # data_raw['train']是一个字典。
     # 结构是(序号：交互序列，每个序列值是一个元组(物品，原始格式的时间))。  # 初始化了一个这样的数据对象

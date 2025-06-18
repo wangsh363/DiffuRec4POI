@@ -123,7 +123,7 @@ class LossSecondMomentResampler(LossAwareSampler):
         self._loss_history = np.zeros(
             [self.num_timesteps, history_per_term], dtype=np.float64
         )
-        self._loss_counts = np.zeros([self.num_timesteps], dtype=int)
+        self._loss_counts = np.zeros([self.num_timesteps], dtype=np.int)
 
     def weights(self):
         if not self._warmed_up():
