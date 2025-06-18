@@ -353,6 +353,7 @@ class TrainDataset(data_utils.Dataset):
         tile_label = self.poi_to_tile.get(label, unk_tile_id)
         tile_labels = [tile_label]
         last_time = seq[-1][1]
+        last_uid = seq[-1][2]
         tokens = seq[:-1]
         tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
         tokens = tokens[-self.max_len:]
@@ -361,7 +362,7 @@ class TrainDataset(data_utils.Dataset):
             mask_len = mask_len - 1
         else:
             tokens = tokens[1:]
-        tokens = [[0, 0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
+        tokens = [[0, 0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
         items = [x[0] for x in tokens]
         timestamps = [x[1] for x in tokens]
         uids = [x[2] for x in tokens]
@@ -494,6 +495,7 @@ class ValDataset(data_utils.Dataset):
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
+        last_uid = self.u2answer[user][0][2]
         seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
@@ -501,7 +503,7 @@ class ValDataset(data_utils.Dataset):
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
         uids = [x[2] for x in seq]
@@ -624,6 +626,7 @@ class TestDataset(data_utils.Dataset):
         tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
+        last_uid = self.u2answer[user][0][2]
         seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
@@ -631,7 +634,7 @@ class TestDataset(data_utils.Dataset):
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]
         uids = [x[2] for x in seq]
@@ -755,6 +758,7 @@ class CHLSDataset(data_utils.Dataset):
         tile_labels = [tile_label]
 
         last_time = data_temp[-1][1]
+        last_uid = data_temp[-1][2]
         seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
@@ -762,7 +766,7 @@ class CHLSDataset(data_utils.Dataset):
             padding_len = padding_len - 1
         else:
             seq = seq[1:]
-        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), 0, 0.0, 0.0]]
+        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
 
         items = [x[0] for x in seq]
         timestamps = [x[1] for x in seq]

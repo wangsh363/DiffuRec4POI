@@ -515,24 +515,27 @@ class Diffu_xstart(nn.Module):
         time_emb_day = self.time2vec_day(input_seq_day_time)
         time_target = (0.7 * time_emb_norm + 0.3 * time_emb_day)[:, -1, :]
 
+        x_t = x_t + emb_t
+
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
         rep_add_uid = torch.cat((rep, user_embeds), dim=2)
         rep = self.fc_item_uid_out(rep_add_uid)
 
-        rep_diffu = self.att(rep + time_emb_all, mask_seq)
+        # rep_diffu = self.att(rep + time_emb_all, mask_seq)
+        rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all, mask_seq)
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
-        out = rep_diffu[:, -1, :]
+        out = rep_diffu[:, -2, :]
 
         out = out + time_target
-        condition = out
+        condition = None
 
-        combined = torch.cat([x_t, condition, emb_t], dim=1)
-        output = self.mlp_model(combined)
-        # output = self.mmlp_model(combined)
-        output = self.norm_diffu_rep(self.dropout(output))
-        rep_diffu = None
+        # combined = torch.cat([x_t, condition, emb_t], dim=1)
+        # output = self.mlp_model(combined)
+        # # output = self.mmlp_model(combined)
+        # output = self.norm_diffu_rep(self.dropout(output))
+        # rep_diffu = None
 
-        return output, rep_diffu, item_tag, time_target, condition
+        return out, rep_diffu, item_tag, time_target, condition
 
 
 class DiffuRec(nn.Module):

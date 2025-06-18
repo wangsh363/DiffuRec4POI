@@ -66,17 +66,15 @@ def hrs_and_ndcgs_k_from_indices(top_k_indices, labels, ks):
         top_k = top_k_indices[:, :min(k, top_k_indices.size(1))]  # (batch_size, k)
         hit = torch.isin(labels_squeezed, top_k)  # (batch_size,)
         hr_val = hit.float().mean().item()
-        if hit.size(0) != batch_size:
-            print(f"错误: 批次大小不一致，预期 {batch_size}，实际 {hit.size(0)}")
         hr.append(hr_val)
 
     # 计算NDCG
     ndcg = []
+    max_ks = max(ks)
+    hit = (labels == top_k_indices).int()  # (batch_size, max_ks)
     for k in ks:
-        top_k = top_k_indices[:, :min(k, top_k_indices.size(1))]
-        hit = (labels.unsqueeze(1) == top_k).int()
-        max_dcg = dcg(torch.tensor([1] + [0] * (k - 1)))
-        predict_dcg = dcg(hit)
+        max_dcg = dcg(torch.tensor([1] + [0] * (k - 1)))  # 理想 DCG
+        predict_dcg = dcg(hit[:, :k])  # 预测 DCG
         ndcg.append((predict_dcg / max_dcg).mean().item())
 
     for k, hr_val, ndcg_val in zip(ks, hr, ndcg):

@@ -14,9 +14,9 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["TORCH_USE_CUDA_DSA"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', default='nyc', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
@@ -57,7 +57,7 @@ parser.add_argument('--quadkey_num', type=int, default=10000, help='Number of un
 parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Quadkey')  # 四键的细节层次
 parser.add_argument('--nhead', type=int, default=1, help='Number of attention heads')
 parser.add_argument('--num_layers', type=int, default=2, help='Number of Transformer layers')
-parser.add_argument('--top_k_tiles', type=int, default=50, help='Top K tiles for inference') # 选取K个瓦片
+parser.add_argument('--top_k_tiles', type=int, default=20, help='Top K tiles for inference') # 选取K个瓦片
 parser.add_argument('--top_k_pois', type=int, default=20, help='Top K pois for inference') # 选取K个POI,用于最终计算结果
 args = parser.parse_args()
 
