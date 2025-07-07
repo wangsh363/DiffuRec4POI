@@ -334,16 +334,16 @@ class Att_Diffuse_model(nn.Module):
 
         items, timestamps, uids, quadkeys, tiles = sequence
         unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
-        unk_poi_id = self.item_num - 1  # <unk> POI ID
+        # unk_poi_id = self.item_num - 1  # <unk> POI ID
 
         # print("tile_vocab_size:", self.tile_vocab_size)
         # print("item_num:", self.item_num)
         if tiles.max().item() >= self.tile_vocab_size or tiles.min().item() < 0:
             print(f"检测到无效瓦片 ID: min={tiles.min().item()}, max={tiles.max().item()}, 词汇表大小={self.tile_vocab_size}")
             tiles = torch.clamp(tiles, min=0, max=unk_tile_id)  # 映射到 <unk>
-        if items.max().item() >= self.item_num or items.min().item() < 0:
-            print(f"检测到无效 items: min={items.min().item()}, max={items.max().item()}, item_num={self.item_num}")
-            items = torch.clamp(items, min=0, max=unk_poi_id)  # 映射到 <unk>
+        # if items.max().item() >= self.item_num or items.min().item() < 0:
+        #     print(f"检测到无效 items: min={items.min().item()}, max={items.max().item()}, item_num={self.item_num}")
+        #     items = torch.clamp(items, min=0, max=unk_poi_id)  # 映射到 <unk>
         # 现在把sequence里的时间信息取出来
         # 理想的数据是这样的：
         # sequence为tuple3, 0是items([512, 50]), 1是timestamps([512, 50])， 2是quadkeys([512, 50, 12])
@@ -367,6 +367,7 @@ class Att_Diffuse_model(nn.Module):
         quadkey_embeds = None
 
         poi_embeds = item_embeddings
+        poi_embeds[:, -1] = 0.0
         # 用户序列嵌入和编码
         user_embeds = self.user_embeddings(uids)
         user_embeds = self.embed_dropout(user_embeds)  ## dropout first than layernorm
@@ -382,15 +383,17 @@ class Att_Diffuse_model(nn.Module):
         # 这个掩码需不需要修改，不是对于item使用了，对象变成了item_rep
         # mask_seq的大小是[512, 50]
         mask_seq = (items > 0).float()  # 这行代码的作用是生成一个掩码（mask），
+        mask_seq_tile = (tiles > 0).float()
         # 用于标识输入序列 sequence 中哪些位置是有效的（非零），哪些位置是无效的（填充值或零值）。float是把布尔值转化为0和1
         # 有一个关键的参数：最后一个值一定要是有效的，因为最后一个值是由目标时间和0组成的。
         mask_seq[:, -1] = 1
+        mask_seq_tile[:, -1] = 0
 
         if train_flag:
             labels_emb = self.item_embeddings(labels.squeeze(-1))
             tiles_emb = self.tile_embeddings(tile_labels.squeeze(-1))
             tile_rep_diffu = self.diffu_tile(
-                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
+                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq_tile
             )
             poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target, condition = self.diffu_pre(
                 poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq
@@ -403,7 +406,7 @@ class Att_Diffuse_model(nn.Module):
             noise_x_t_poi = th.randn_like(item_embeddings[:, -1, :])
             ######### 这个噪声是一样的吗，需不需要修改
             tile_rep_diffu = self.diffu_tile(
-                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq
+                tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq_tile
             )
             poi_rep_diffu, poi_time_target = self.reverse(
                 poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
@@ -428,7 +431,7 @@ class Att_Diffuse_model(nn.Module):
                         continue  # 跳过 <unk> 瓦片
                     if tile_id in self.tile_to_poi and self.tile_to_poi[tile_id]:
                         for poi_id in self.tile_to_poi[tile_id]:
-                            if poi_id >= self.item_num  or poi_id == unk_poi_id:
+                            if poi_id >= self.item_num:
                                 print(f"警告: 无效 POI ID {poi_id} 在瓦片 {tile_id}，跳过")
                                 continue
                             poi_set.add(poi_id)

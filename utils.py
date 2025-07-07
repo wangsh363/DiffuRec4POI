@@ -169,14 +169,14 @@ class QuadTree:
 
 def generate_tiles(data_dict, boundary, max_depth=5, max_items=10):
     qt = QuadTree(boundary, max_depth, max_items)
-    smap_reverse = data_dict.get('smap_reverse', {})
+    # smap_reverse = data_dict.get('smap_reverse', {})
     unmapped_pois = []
     valid_pois = []
     for split in ['train', 'val', 'test']:
         for seq in data_dict[split].values():
             for raw_poi_id, _, _, lat, lon in seq:
                 if lat != 0.0 or lon != 0.0:
-                    mapped_poi_id = smap_reverse.get(raw_poi_id, -1)
+                    mapped_poi_id = raw_poi_id
                     if mapped_poi_id == -1:
                         unmapped_pois.append((raw_poi_id, lat, lon, "无效映射"))
                         continue
@@ -206,14 +206,14 @@ def map_to_tile(tiles, lon, lat):
 def build_tile_vocab(data_dict, max_depth=10, max_items=50):
     boundary = calculate_boundary(data_dict)
     tiles = generate_tiles(data_dict, boundary, max_depth, max_items)
-    for i, tile in enumerate(tiles, 1):
+    for i, tile in enumerate(tiles):
         tile.id = i
     tile_vocab = {tile.id: tile for tile in tiles}
-    tile_vocab[0] = None
+    # tile_vocab[0] = None
     unk_tile_id = len(tiles) + 1
     tile_vocab[unk_tile_id] = None
     tile_to_poi = {tile.id: tile.poi_ids for tile in tiles}
-    tile_to_poi[0] = set()
+    # tile_to_poi[0] = set()
     tile_to_poi[unk_tile_id] = set()
 
     poi_to_tile = {}
@@ -221,13 +221,14 @@ def build_tile_vocab(data_dict, max_depth=10, max_items=50):
         for poi_id in poi_ids:
             poi_to_tile[poi_id] = tile_id
 
-    smap_reverse = data_dict.get('smap_reverse', {})
-    all_poi_ids = set(smap_reverse.values())
+    # smap_reverse = data_dict.get('smap_reverse', {})
+    # all_poi_ids = set(smap_reverse.values())
+    all_poi_ids = set(range(data_dict['num_poi']))
     used_poi_ids = set()
     for split in ['train', 'val', 'test']:
         for seq in data_dict[split].values():
             for raw_poi_id, _, _, _, _ in seq:
-                mapped_poi_id = smap_reverse.get(raw_poi_id, -1)
+                mapped_poi_id = raw_poi_id
                 if mapped_poi_id != -1:
                     used_poi_ids.add(mapped_poi_id)
     print(f"总POI ID数量: {len(all_poi_ids)}")
@@ -242,9 +243,9 @@ def build_tile_vocab(data_dict, max_depth=10, max_items=50):
         print(f"警告: {len(missing_pois)} 个 POI ID 未映射到任何瓦片: {list(missing_pois)[:10]}")
         if missing_pois.issubset(unused_poi_ids):
             print("所有未映射的POI ID均为未使用的数据")
-        for poi_id in missing_pois:
-            poi_to_tile[poi_id] = unk_tile_id
-            tile_to_poi[unk_tile_id].add(poi_id)
+        # for poi_id in missing_pois:
+        #     poi_to_tile[poi_id] = unk_tile_id
+        #     tile_to_poi[unk_tile_id].add(poi_id)
 
     return tile_vocab, tiles, tile_to_poi, poi_to_tile
 
@@ -266,7 +267,7 @@ def build_data_vocabs(data_dict, cache_dir='./cache', dataset_name='gowalla'):
 
 
 class TrainDataset(data_utils.Dataset):
-    def __init__(self, id2seq, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, smap_reverse=None, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, id2seq, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, cache_dir='./cache', dataset_name='gowalla'):
         self.id2seq = id2seq
         self.max_len = max_len
         self.quadkey_vocab = quadkey_vocab
@@ -275,7 +276,7 @@ class TrainDataset(data_utils.Dataset):
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
         self.lod = lod
-        self.smap_reverse = smap_reverse or {}
+        # self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
         # 预计算 quadkeys 和 tile_ids
@@ -304,58 +305,59 @@ class TrainDataset(data_utils.Dataset):
     #         return precomputed_data
     #     return None
 
-    def _precompute_quadkeys_and_tiles(self):
-        """预计算所有序列的 quadkeys 和 tile_ids"""
-        precomputed = {}
-        for idx in range(len(self.id2seq)):
-            seq = self._getseq(idx)
-            tokens = seq[:-1]
-            tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for
-                      item in tokens]
-            tokens = tokens[-self.max_len:]
-            mask_len = self.max_len - len(tokens)
-            if mask_len > 0:
-                mask_len = mask_len - 1
-            else:
-                tokens = tokens[1:]
-            tokens = [[0, 0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(seq[-1][1].timestamp()), 0, 0.0, 0.0]]
+    # def _precompute_quadkeys_and_tiles(self):
+    #     """预计算所有序列的 quadkeys 和 tile_ids"""
+    #     precomputed = {}
+    #     for idx in range(len(self.id2seq)):
+    #         seq = self._getseq(idx)
+    #         tokens = seq[:-1]
+    #         tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for
+    #                   item in tokens]
+    #         tokens = tokens[-self.max_len:]
+    #         mask_len = self.max_len - len(tokens)
+    #         if mask_len > 0:
+    #             mask_len = mask_len - 1
+    #         else:
+    #             tokens = tokens[1:]
+    #         tokens = [[0, 0, 0, 0.0, 0.0]] * mask_len + tokens + [[0, int(seq[-1][1].timestamp()), 0, 0.0, 0.0]]
 
-            quadkeys = []
-            tile_ids = []
-            coords = []
-            for item in tokens:
-                lat, lon = item[3], item[4]
-                if lat == 0.0 and lon == 0.0:
-                    quadkeys.append(['0'])
-                    tile_ids.append(0)
-                    coords.append([0.0, 0.0])
-                else:
-                    qk = Quadkey.from_geo((lat, lon), self.lod)
-                    qk_str = str(qk)
-                    qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
-                    quadkeys.append(qk_ngrams.split())
-                    tile_id = map_to_tile(self.tiles, lon, lat)
-                    tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else self.tile_vocab_size - 1
-                    tile_ids.append(tile_id)
-                    coords.append([lat, lon])
-            precomputed[idx] = (quadkeys, tile_ids, coords)
-        return precomputed
+    #         quadkeys = []
+    #         tile_ids = []
+    #         coords = []
+    #         for item in tokens:
+    #             lat, lon = item[3], item[4]
+    #             if lat == 0.0 and lon == 0.0:
+    #                 quadkeys.append(['0'])
+    #                 tile_ids.append(0)
+    #                 coords.append([0.0, 0.0])
+    #             else:
+    #                 qk = Quadkey.from_geo((lat, lon), self.lod)
+    #                 qk_str = str(qk)
+    #                 qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+    #                 quadkeys.append(qk_ngrams.split())
+    #                 tile_id = map_to_tile(self.tiles, lon, lat)
+    #                 tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else self.tile_vocab_size - 1
+    #                 tile_ids.append(tile_id)
+    #                 coords.append([lat, lon])
+    #         precomputed[idx] = (quadkeys, tile_ids, coords)
+    #     return precomputed
 
     def __len__(self):
         return len(self.id2seq)
 
     def __getitem__(self, index):
         seq = self._getseq(index)
-        raw_label = seq[-1][0]
-        label = self.smap_reverse.get(raw_label, -1)
-        labels = [label]
-        unk_tile_id = self.tile_vocab_size - 1
-        tile_label = self.poi_to_tile.get(label, unk_tile_id)
+        # raw_label = seq[-1][0]
+        # label = self.smap_reverse.get(raw_label, -1)
+        # labels = [label]
+        labels = [seq[-1][0]]
+        # unk_tile_id = self.tile_vocab_size - 1
+        tile_label = self.poi_to_tile.get(seq[-1][0])
         tile_labels = [tile_label]
         last_time = seq[-1][1]
         last_uid = seq[-1][2]
         tokens = seq[:-1]
-        tokens = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
+        tokens = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
         tokens = tokens[-self.max_len:]
         mask_len = self.max_len - len(tokens)
         if mask_len > 0:
@@ -389,7 +391,7 @@ class TrainDataset(data_utils.Dataset):
 
 
 class Data_Train:
-    def __init__(self, data_train, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, smap_reverse):
+    def __init__(self, data_train, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile):
         self.u2seq = data_train
         self.max_len = args.max_len
         self.batch_size = args.batch_size
@@ -398,7 +400,7 @@ class Data_Train:
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
-        self.smap_reverse = smap_reverse
+        # self.smap_reverse = smap_reverse
         self.split_onebyone()
         self.dataset_name = args.dataset
         self.cache_dir = './cache'
@@ -414,7 +416,7 @@ class Data_Train:
                 idx += 1
 
     def get_pytorch_dataloaders(self):
-        dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, smap_reverse=self.smap_reverse, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True, collate_fn=self.collate_fn)
 
     def collate_fn(self, batch):
@@ -429,7 +431,7 @@ class Data_Train:
                 torch.stack(coords))
 
 class ValDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, smap_reverse=None, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, u2seq, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, cache_dir='./cache', dataset_name='gowalla'):
         self.u2seq = u2seq
         self.users = sorted(self.u2seq.keys())
         self.u2answer = u2answer
@@ -440,47 +442,47 @@ class ValDataset(data_utils.Dataset):
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
         self.lod = lod
-        self.smap_reverse = smap_reverse or {}
+        # self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
         # self.precomputed_data = self._precompute_quadkeys_and_tiles()
 
-    def _precompute_quadkeys_and_tiles(self):
-        """预计算所有序列的 quadkeys 和 tile_ids"""
-        precomputed = {}
-        for idx, user in enumerate(self.users):
-            seq = self.u2seq[user]
-            seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in
-                   seq]
-            seq = seq[-self.max_len:]
-            padding_len = self.max_len - len(seq)
-            if padding_len > 0:
-                padding_len = padding_len - 1
-            else:
-                seq = seq[1:]
-            seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [
-                [0, int(self.u2answer[user][0][1].timestamp()), 0, 0.0, 0.0]]
+    # def _precompute_quadkeys_and_tiles(self):
+    #     """预计算所有序列的 quadkeys 和 tile_ids"""
+    #     precomputed = {}
+    #     for idx, user in enumerate(self.users):
+    #         seq = self.u2seq[user]
+    #         seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in
+    #                seq]
+    #         seq = seq[-self.max_len:]
+    #         padding_len = self.max_len - len(seq)
+    #         if padding_len > 0:
+    #             padding_len = padding_len - 1
+    #         else:
+    #             seq = seq[1:]
+    #         seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [
+    #             [0, int(self.u2answer[user][0][1].timestamp()), 0, 0.0, 0.0]]
 
-            quadkeys = []
-            tile_ids = []
-            coords = []
-            for item in seq:
-                lat, lon = item[3], item[4]
-                if lat == 0.0 and lon == 0.0:
-                    quadkeys.append(['0'])
-                    tile_ids.append(0)
-                    coords.append([0.0, 0.0])
-                else:
-                    qk = Quadkey.from_geo((lat, lon), self.lod)
-                    qk_str = str(qk)
-                    qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
-                    quadkeys.append(qk_ngrams.split())
-                    tile_id = map_to_tile(self.tiles, lon, lat)
-                    tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else self.tile_vocab_size - 1
-                    tile_ids.append(tile_id)
-                    coords.append([lat, lon])
-            precomputed[idx] = (quadkeys, tile_ids, coords)
-        return precomputed
+    #         quadkeys = []
+    #         tile_ids = []
+    #         coords = []
+    #         for item in seq:
+    #             lat, lon = item[3], item[4]
+    #             if lat == 0.0 and lon == 0.0:
+    #                 quadkeys.append(['0'])
+    #                 tile_ids.append(0)
+    #                 coords.append([0.0, 0.0])
+    #             else:
+    #                 qk = Quadkey.from_geo((lat, lon), self.lod)
+    #                 qk_str = str(qk)
+    #                 qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+    #                 quadkeys.append(qk_ngrams.split())
+    #                 tile_id = map_to_tile(self.tiles, lon, lat)
+    #                 tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else self.tile_vocab_size - 1
+    #                 tile_ids.append(tile_id)
+    #                 coords.append([lat, lon])
+    #         precomputed[idx] = (quadkeys, tile_ids, coords)
+    #     return precomputed
 
     def __len__(self):
         return len(self.users)
@@ -488,15 +490,16 @@ class ValDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         seq = self.u2seq[user]
-        raw_answer = self.u2answer[user][0][0]
-        answer = self.smap_reverse.get(raw_answer, -1)
-        answer = [answer]
-        unk_tile_id = self.tile_vocab_size - 1
-        tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
+        # raw_answer = self.u2answer[user][0][0]
+        # answer = self.smap_reverse.get(raw_answer, -1)
+        # answer = [answer]
+        answer = [self.u2answer[user][0][0]]
+        # unk_tile_id = self.tile_vocab_size - 1
+        tile_label = self.poi_to_tile.get(answer[0])
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
         last_uid = self.u2answer[user][0][2]
-        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
@@ -527,7 +530,7 @@ class ValDataset(data_utils.Dataset):
 
 
 class Data_Val:
-    def __init__(self, data_train, data_val, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, smap_reverse):
+    def __init__(self, data_train, data_val, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile):
         self.batch_size = args.batch_size
         self.u2seq = data_train
         self.u2answer = data_val
@@ -537,12 +540,12 @@ class Data_Val:
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
-        self.smap_reverse = smap_reverse
+        # self.smap_reverse = smap_reverse
         self.dataset_name = args.dataset
         self.cache_dir = './cache'
 
     def get_pytorch_dataloaders(self):
-        dataset = ValDataset(self.u2seq, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, smap_reverse=self.smap_reverse, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = ValDataset(self.u2seq, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
 
@@ -559,7 +562,7 @@ class Data_Val:
 
 
 class TestDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2_seq_add, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, smap_reverse=None, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, u2seq, u2_seq_add, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, cache_dir='./cache', dataset_name='gowalla'):
         self.u2seq = u2seq
         self.u2seq_add = u2_seq_add
         self.users = sorted(self.u2seq.keys())
@@ -571,63 +574,65 @@ class TestDataset(data_utils.Dataset):
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
         self.lod = lod
-        self.smap_reverse = smap_reverse or {}
+        # self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
         # self.precomputed_data = self._precompute_quadkeys_and_tiles()
 
-    def _precompute_quadkeys_and_tiles(self):
-        """预计算所有序列的 quadkeys 和 tile_ids"""
-        precomputed = {}
-        for idx, user in enumerate(self.users):
-            seq = self.u2seq[user]
-            seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in
-                   seq]
-            seq = seq[-self.max_len:]
-            padding_len = self.max_len - len(seq)
-            if padding_len > 0:
-                padding_len = padding_len - 1
-            else:
-                seq = seq[1:]
-            seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [
-                [0, int(self.u2answer[user][0][1].timestamp()), 0, 0.0, 0.0]]
+    # def _precompute_quadkeys_and_tiles(self):
+    #     """预计算所有序列的 quadkeys 和 tile_ids"""
+    #     precomputed = {}
+    #     for idx, user in enumerate(self.users):
+    #         seq = self.u2seq[user]
+    #         seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in
+    #                seq]
+    #         seq = seq[-self.max_len:]
+    #         padding_len = self.max_len - len(seq)
+    #         if padding_len > 0:
+    #             padding_len = padding_len - 1
+    #         else:
+    #             seq = seq[1:]
+    #         seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [
+    #             [0, int(self.u2answer[user][0][1].timestamp()), 0, 0.0, 0.0]]
 
-            quadkeys = []
-            tile_ids = []
-            coords = []
-            for item in seq:
-                lat, lon = item[3], item[4]
-                if lat == 0.0 and lon == 0.0:
-                    quadkeys.append(['0'])
-                    tile_ids.append(0)
-                    coords.append([0.0, 0.0])
-                else:
-                    qk = Quadkey.from_geo((lat, lon), self.lod)
-                    qk_str = str(qk)
-                    qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
-                    quadkeys.append(qk_ngrams.split())
-                    tile_id = map_to_tile(self.tiles, lon, lat)
-                    tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else self.tile_vocab_size - 1
-                    tile_ids.append(tile_id)
-                    coords.append([lat, lon])
-            precomputed[idx] = (quadkeys, tile_ids, coords)
-        return precomputed
+    #         quadkeys = []
+    #         tile_ids = []
+    #         coords = []
+    #         for item in seq:
+    #             lat, lon = item[3], item[4]
+    #             if lat == 0.0 and lon == 0.0:
+    #                 quadkeys.append(['0'])
+    #                 tile_ids.append(0)
+    #                 coords.append([0.0, 0.0])
+    #             else:
+    #                 qk = Quadkey.from_geo((lat, lon), self.lod)
+    #                 qk_str = str(qk)
+    #                 qk_ngrams = ' '.join([''.join(x) for x in ngrams(qk_str, 6)]) if len(qk_str) >= 6 else qk_str
+    #                 quadkeys.append(qk_ngrams.split())
+    #                 tile_id = map_to_tile(self.tiles, lon, lat)
+    #                 tile_id = tile_id if tile_id != -1 and tile_id < self.tile_vocab_size else self.tile_vocab_size - 1
+    #                 tile_ids.append(tile_id)
+    #                 coords.append([lat, lon])
+    #         precomputed[idx] = (quadkeys, tile_ids, coords)
+    #     return precomputed
 
     def __len__(self):
         return len(self.users)
 
     def __getitem__(self, index):
         user = self.users[index]
-        seq = self.u2seq[user]
-        raw_answer = self.u2answer[user][0][0]
-        answer = self.smap_reverse.get(raw_answer, -1)
-        answer = [answer]
-        unk_tile_id = self.tile_vocab_size - 1
-        tile_label = self.poi_to_tile.get(answer[0], unk_tile_id)
+        # seq = self.u2seq[user]
+        seq = self.u2seq[user] + self.u2seq_add[user]
+        # raw_answer = self.u2answer[user][0][0]
+        # answer = self.smap_reverse.get(raw_answer, -1)
+        # answer = [answer]
+        answer = [self.u2answer[user][0][0]]
+        # unk_tile_id = self.tile_vocab_size - 1
+        tile_label = self.poi_to_tile.get(answer[0])
         tile_labels = [tile_label]
         last_time = self.u2answer[user][0][1]
         last_uid = self.u2answer[user][0][2]
-        seq = [[self.smap_reverse.get(item[0], -1), int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
+        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
         seq = seq[-self.max_len:]
         padding_len = self.max_len - len(seq)
         if padding_len > 0:
@@ -658,7 +663,7 @@ class TestDataset(data_utils.Dataset):
 
 
 class Data_Test:
-    def __init__(self, data_train, data_val, data_test, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, smap_reverse):
+    def __init__(self, data_train, data_val, data_test, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile):
         self.batch_size = args.batch_size
         self.u2seq = data_train
         self.u2seq_add = data_val
@@ -669,12 +674,12 @@ class Data_Test:
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
-        self.smap_reverse = smap_reverse or {}
+        # self.smap_reverse = smap_reverse or {}
         self.dataset_name = args.dataset
         self.cache_dir = './cache'
 
     def get_pytorch_dataloaders(self):
-        dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, smap_reverse=self.smap_reverse, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
 
