@@ -517,16 +517,20 @@ class Diffu_xstart(nn.Module):
 
         x_t = x_t + emb_t
 
+        delta = torch.zeros_like(rep)
+        delta[:, -1, :] = lambda_uncertainty[:, -1, :] * x_t
+        rep = rep + delta
+
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
         rep_add_uid = torch.cat((rep, user_embeds), dim=2)
         rep = self.fc_item_uid_out(rep_add_uid)
 
         # rep_diffu = self.att(rep + time_emb_all, mask_seq)
-        rep_diffu = self.att(rep + lambda_uncertainty * x_t.unsqueeze(1) + time_emb_all, mask_seq)
+        rep_diffu = self.att(rep + time_emb_all, mask_seq)
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
         out = rep_diffu[:, -2, :]
 
-        out = out + time_target
+        # out = out + time_target
         condition = None
 
         # combined = torch.cat([x_t, condition, emb_t], dim=1)

@@ -135,8 +135,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     best_metrics_dict_poi = {'poi_Best_HR@5': 0, 'poi_Best_NDCG@5': 0, 'poi_Best_HR@10': 0, 'poi_Best_NDCG@10': 0, 'poi_Best_HR@20': 0, 'poi_Best_NDCG@20': 0}
     best_epoch_poi = {'poi_Best_epoch_HR@5': 0, 'poi_Best_epoch_NDCG@5': 0, 'poi_Best_epoch_HR@10': 0, 'poi_Best_epoch_NDCG@10': 0, 'poi_Best_epoch_HR@20': 0, 'poi_Best_epoch_NDCG@20': 0}
     bad_count = 0
-    unk_poi_id = args.item_num - 1
-    unk_tile_id = args.tile_vocab_size - 1 if hasattr(args, 'tile_vocab_size') else model_joint.tile_vocab_size - 1
+    unk_poi_id = args.item_num
+    unk_tile_id = args.tile_vocab_size if hasattr(args, 'tile_vocab_size') else model_joint.tile_vocab_size
 
     for epoch_temp in range(epochs):
         print('Epoch: {}'.format(epoch_temp))
