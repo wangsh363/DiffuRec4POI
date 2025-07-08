@@ -206,20 +206,24 @@ def map_to_tile(tiles, lon, lat):
 def build_tile_vocab(data_dict, max_depth=10, max_items=50):
     boundary = calculate_boundary(data_dict)
     tiles = generate_tiles(data_dict, boundary, max_depth, max_items)
-    for i, tile in enumerate(tiles):
+    for i, tile in enumerate(tiles, 1):
         tile.id = i
     tile_vocab = {tile.id: tile for tile in tiles}
-    # tile_vocab[0] = None
-    unk_tile_id = len(tiles) + 1
-    tile_vocab[unk_tile_id] = None
+    tile_vocab[0] = None
+    # unk_tile_id = len(tiles) + 1
+    # tile_vocab[unk_tile_id] = None
     tile_to_poi = {tile.id: tile.poi_ids for tile in tiles}
-    # tile_to_poi[0] = set()
-    tile_to_poi[unk_tile_id] = set()
+    tile_to_poi[0] = set()
+    # tile_to_poi[unk_tile_id] = set()
 
     poi_to_tile = {}
     for tile_id, poi_ids in tile_to_poi.items():
         for poi_id in poi_ids:
+            if poi_id == 0:
+                print("警告:出现 POI ID 0")
+                return 0
             poi_to_tile[poi_id] = tile_id
+    poi_to_tile[0] = 0
 
     # smap_reverse = data_dict.get('smap_reverse', {})
     # all_poi_ids = set(smap_reverse.values())

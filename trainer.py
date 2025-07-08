@@ -135,8 +135,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     best_metrics_dict_poi = {'poi_Best_HR@5': 0, 'poi_Best_NDCG@5': 0, 'poi_Best_HR@10': 0, 'poi_Best_NDCG@10': 0, 'poi_Best_HR@20': 0, 'poi_Best_NDCG@20': 0}
     best_epoch_poi = {'poi_Best_epoch_HR@5': 0, 'poi_Best_epoch_NDCG@5': 0, 'poi_Best_epoch_HR@10': 0, 'poi_Best_epoch_NDCG@10': 0, 'poi_Best_epoch_HR@20': 0, 'poi_Best_epoch_NDCG@20': 0}
     bad_count = 0
-    unk_poi_id = args.item_num
-    unk_tile_id = args.tile_vocab_size if hasattr(args, 'tile_vocab_size') else model_joint.tile_vocab_size
+    unk_poi_id = 0
+    unk_tile_id = 0
 
     for epoch_temp in range(epochs):
         print('Epoch: {}'.format(epoch_temp))
@@ -147,21 +147,21 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             train_batch = [x.to(device) for x in train_batch]
             items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = train_batch
             sequence = (items, timestamps, uids, quadkeys, tiles)
-            if labels.max().item() >= args.item_num or labels.min().item() < 0:
+            if labels.max().item() >= args.item_num + 1 or labels.min().item() < 0:
                 print(f"警告: 无效 POI labels 检测到，min={labels.min().item()}, max={labels.max().item()}, item_num={args.item_num}")
-                labels = torch.where(labels == -1, unk_poi_id, labels)
-                if labels.max().item() >= args.item_num:
+                # labels = torch.where(labels == -1, unk_poi_id, labels)
+                if labels.max().item() >= args.item_num + 1:
                     print(f"错误: POI 标签仍然无效，max={labels.max().item()}")
-                    labels = torch.clamp(labels, 0, unk_poi_id)
+                    # labels = torch.clamp(labels, 0, unk_poi_id)
             if tile_labels.max().item() >= model_joint.tile_vocab_size or tile_labels.min().item() < 0:
                 print(f"警告: 无效 tile_labels 检测到，min={tile_labels.min().item()}, max={tile_labels.max().item()}, tile_vocab_size={model_joint.tile_vocab_size}")
-                tile_labels = torch.where(tile_labels == -1, unk_tile_id, tile_labels)
+                # tile_labels = torch.where(tile_labels == -1, unk_tile_id, tile_labels)
                 if tile_labels.max().item() >= model_joint.tileVocab_size:
                     print(f"错误: 瓦片标签仍然无效，max={tile_labels.max().item()}")
-                    tile_labels = torch.clamp(tile_labels, 0, unk_tile_id)
-            if items.max().item() >= args.item_num or items.min().item() < 0:
+                    # tile_labels = torch.clamp(tile_labels, 0, unk_tile_id)
+            if items.max().item() >= args.item_num + 1 or items.min().item() < 0:
                 print(f"警告: 无效 items 检测到，min={items.min().item()}, max={items.max().item()}, item_num={args.item_num}")
-                items = torch.clamp(items, 0, unk_poi_id)
+                # items = torch.clamp(items, 0, unk_poi_id)
             optimizer.zero_grad()
             condition, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=coords)
             tile_rep_diffu, poi_rep_diffu = diffu_rep

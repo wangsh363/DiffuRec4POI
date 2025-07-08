@@ -191,12 +191,12 @@ class Att_Diffuse_model(nn.Module):
         # 这是一个嵌入层。第一个参数是最大索引值，第二个参数是嵌入层维度。用来给物品id编码
         # 最大索引值通过smap的长度来确定。
         # 但是ca的smap不是按照长度来分配的。要改一下。
-        self.PAD_IDX = args.item_num
+        self.PAD_IDX = 0
         self.item_embeddings = nn.Embedding(self.item_num + 1, self.emb_dim, padding_idx=self.PAD_IDX)
-        self.user_embeddings = nn.Embedding(self.user_num, self.emb_dim)
+        self.user_embeddings = nn.Embedding(self.user_num + 1, self.emb_dim, padding_idx=self.PAD_IDX)
         # quadkey嵌入
         self.quadkey_embeddings = nn.Embedding(quadkey_vocab_size, self.emb_dim)
-        self.tile_embeddings = nn.Embedding(tile_vocab_size, self.emb_dim, padding_idx=0)
+        self.tile_embeddings = nn.Embedding(tile_vocab_size, self.emb_dim, padding_idx=self.PAD_IDX)
         self.tile_to_poi = tile_to_poi  # 存储瓦片到POI的映射
 
         self.embed_dropout = nn.Dropout(args.emb_dropout)
@@ -236,9 +236,9 @@ class Att_Diffuse_model(nn.Module):
 
         self.tile_pos_enc = TilePosEnc(self.emb_dim, device=args.device)
         # 初始化 <unk> 嵌入,避免与填充向量（全零）混淆。
-        with torch.no_grad():
-            self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
-            self.tile_embeddings.weight[tile_vocab_size - 1].normal_(mean=0, std=0.1)  # <unk> 瓦片嵌入
+        # with torch.no_grad():
+        #     self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
+        #     self.tile_embeddings.weight[tile_vocab_size - 1].normal_(mean=0, std=0.1)  # <unk> 瓦片嵌入
 
     def diffu_pre(self, rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq):
         seq_rep_diffu, item_rep_out, weights, t, time_target, condition = self.diffu_poi(
@@ -333,14 +333,14 @@ class Att_Diffuse_model(nn.Module):
         # position_embeddings = self.position_embeddings(position_ids)
 
         items, timestamps, uids, quadkeys, tiles = sequence
-        unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
+        # unk_tile_id = self.tile_vocab_size - 1  # <unk> 瓦片ID
         # unk_poi_id = self.item_num - 1  # <unk> POI ID
 
         # print("tile_vocab_size:", self.tile_vocab_size)
         # print("item_num:", self.item_num)
-        if tiles.max().item() >= self.tile_vocab_size or tiles.min().item() < 0:
-            print(f"检测到无效瓦片 ID: min={tiles.min().item()}, max={tiles.max().item()}, 词汇表大小={self.tile_vocab_size}")
-            tiles = torch.clamp(tiles, min=0, max=unk_tile_id)  # 映射到 <unk>
+        # if tiles.max().item() >= self.tile_vocab_size or tiles.min().item() < 0:
+        #     print(f"检测到无效瓦片 ID: min={tiles.min().item()}, max={tiles.max().item()}, 词汇表大小={self.tile_vocab_size}")
+        #     tiles = torch.clamp(tiles, min=0, max=unk_tile_id)  # 映射到 <unk>
         # if items.max().item() >= self.item_num or items.min().item() < 0:
         #     print(f"检测到无效 items: min={items.min().item()}, max={items.max().item()}, item_num={self.item_num}")
         #     items = torch.clamp(items, min=0, max=unk_poi_id)  # 映射到 <unk>
@@ -377,6 +377,7 @@ class Att_Diffuse_model(nn.Module):
         tile_embeds = self.embed_dropout(tile_embeds)  ## dropout first than layernorm
         tile_embeds = self.LayerNorm(tile_embeds)  # 归一化
         tile_embeds = self.tile_pos_enc(tile_embeds, coords)
+        tile_embeds[:, -1] = 0.0
         # 问题就在如何去产生tile的位置序列,此外还需要看看位置编码层的初始化，利用经纬度的二维坐标生成后面继续判断两种类别，区分tile和pos的嵌入
 
 
@@ -427,11 +428,11 @@ class Att_Diffuse_model(nn.Module):
                 for rank, tile_id in enumerate(tile_ids):
                     weight = 1.0 / (rank / 20 + 1)
                     # weight = 1.0
-                    if tile_id == unk_tile_id:
-                        continue  # 跳过 <unk> 瓦片
+                    # if tile_id == unk_tile_id:
+                    #     continue  # 跳过 <unk> 瓦片
                     if tile_id in self.tile_to_poi and self.tile_to_poi[tile_id]:
                         for poi_id in self.tile_to_poi[tile_id]:
-                            if poi_id >= self.item_num:
+                            if poi_id >= self.item_num + 1 or poi_id < 0:
                                 print(f"警告: 无效 POI ID {poi_id} 在瓦片 {tile_id}，跳过")
                                 continue
                             poi_set.add(poi_id)

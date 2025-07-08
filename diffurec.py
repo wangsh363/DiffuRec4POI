@@ -455,7 +455,7 @@ class tile_pre(nn.Module):
         rep_diffu = self.att(rep + time_emb_all, mask_seq)
 
         rep_diffu = self.norm_diffu_rep(self.dropout(rep_diffu))
-        out = rep_diffu[:, -1, :]
+        out = rep_diffu[:, -2, :]
         # out = out + time_target
 
         return out
