@@ -5,6 +5,7 @@ from datetime import datetime
 from pyquadkey2 import quadkey as pqk
 from torchtext.vocab import build_vocab_from_iterator
 from nltk import ngrams
+from collections import defaultdict
 import pickle
 import os
 
@@ -114,14 +115,21 @@ class QuadTree:
         if not self.contains(item[0], item[1]):
             return False
         if self.children is None:
+            if item[2] in self.poi_ids:
+                return True
             # 仅在叶节点添加POI
             self.items.append(item)
             self.poi_ids.add(item[2])
         if self.children is None and len(self.items) > self.max_items and self.depth < self.max_depth:
             self.split()
         if self.children is not None:
+            inserted = False
             for child in self.children:
-                child.insert(item)
+                if child.insert(item):
+                    inserted = True
+                    break
+            if not inserted:
+                print(f"POI {item[2]} 未插入到任何子节点，坐标: ({item[0]}, {item[1]})")
         return True
 
     def split(self):
@@ -151,20 +159,22 @@ class QuadTree:
         self.poi_ids = set()
 
     def contains(self, lon, lat):
-        return (self.boundary[0] <= lon <= self.boundary[2] and
-                self.boundary[1] <= lat <= self.boundary[3])
+        return (self.boundary[0] <= lon < self.boundary[2] and
+                self.boundary[1] <= lat < self.boundary[3])
 
     def get_leaves(self, tiles=None, tile_id=0):
         if tiles is None:
             tiles = []
         if self.children is None:
-            self.id = tile_id
-            tiles.append(self)
-            # print(f"Tile {tile_id}: Boundary {self.boundary}, POI IDs {self.poi_ids}")
-            return tiles, tile_id + 1
-        for child in self.children:
-            tiles, tile_id = child.get_leaves(tiles, tile_id)
-        return tiles, tile_id
+            if self.poi_ids: # 仅在有POI时创建瓦片
+                self.id = tile_id
+                tiles.append(self)
+                tile_id += 1
+            return tiles, tile_id
+        else:
+            for child in self.children:
+                tiles, tile_id = child.get_leaves(tiles, tile_id)
+            return tiles, tile_id
 
 
 def generate_tiles(data_dict, boundary, max_depth=5, max_items=10):
@@ -172,10 +182,11 @@ def generate_tiles(data_dict, boundary, max_depth=5, max_items=10):
     # smap_reverse = data_dict.get('smap_reverse', {})
     unmapped_pois = []
     valid_pois = []
+    seen_pois = set()
     for split in ['train', 'val', 'test']:
         for seq in data_dict[split].values():
             for raw_poi_id, _, _, lat, lon in seq:
-                if lat != 0.0 or lon != 0.0:
+                if raw_poi_id not in seen_pois:
                     mapped_poi_id = raw_poi_id
                     if mapped_poi_id == -1:
                         unmapped_pois.append((raw_poi_id, lat, lon, "无效映射"))
@@ -184,8 +195,7 @@ def generate_tiles(data_dict, boundary, max_depth=5, max_items=10):
                         unmapped_pois.append((raw_poi_id, lat, lon, "超出边界"))
                     else:
                         valid_pois.append((lon, lat, mapped_poi_id))
-                else:
-                    unmapped_pois.append((raw_poi_id, lat, lon, "无效经纬度"))
+                    seen_pois.add(raw_poi_id)
     print(f"有效插入的POI数量: {len(valid_pois)}")
     print(f"未插入的POI数量: {len(unmapped_pois)}")
     if unmapped_pois:
@@ -193,6 +203,20 @@ def generate_tiles(data_dict, boundary, max_depth=5, max_items=10):
         for poi in unmapped_pois[:10]:
             print(f"POI: {poi[0]}, 经纬度: ({poi[1]}, {poi[2]}), 原因: {poi[3]}")
     tiles, _ = qt.get_leaves()
+
+    poi_to_tiles = defaultdict(list)
+    for tile in tiles:
+        for pid in tile.poi_ids:
+            poi_to_tiles[pid].append(tile.id)
+
+    duplicates = {pid: tids for pid, tids in poi_to_tiles.items() if len(tids) > 1}
+
+    if duplicates:
+        print("❗以下 POI 出现在多个瓦片中：")
+        for pid, tids in duplicates.items():
+            print(f"POI {pid} in tiles {tids}")
+    else:
+        print("✅ 所有 POI 只出现在一个瓦片中")
     return tiles
 
 

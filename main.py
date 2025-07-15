@@ -14,14 +14,14 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', default='nyc', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
 parser.add_argument('--log_file', default='log/', help='log dir path')
-parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')  
+parser.add_argument('--random_seed', type=int, default=2025, help='Random seed')  
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPU')

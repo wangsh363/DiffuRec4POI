@@ -4,6 +4,7 @@ import datetime
 import torch
 import numpy as np
 import copy
+import os
 import time
 import pickle
 
@@ -304,6 +305,18 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         logger.info(best_metrics_dict)
         logger.info(best_epoch)
         print(args)
+
+        print('saving model...')
+        # 模型保存目录
+        save_dir = 'model' 
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        # 保存最好的模型参数
+        best_model_path = os.path.join(save_dir, 'best_model_' + args.dataset + '.pth')
+        torch.save(best_model.state_dict(), best_model_path)
+        logger.info(f"Best model saved at {best_model_path}")
+
+
         if args.diversity_measure:
             path_data = '../datasets/data/category/' + args.dataset + '/id_category_dict.pkl'
             with open(path_data, 'rb') as f:
