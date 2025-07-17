@@ -56,7 +56,7 @@ def hrs_and_ndcgs_k(scores, labels, ks):
 
 def hrs_and_ndcgs_k_from_indices(top_k_indices, labels, ks):
     metrics = {}
-    labels = labels.clone().detach().to('cpu')
+    labels = labels.clone().detach().to('cpu').view(-1)
     top_k_indices = top_k_indices.clone().detach().to('cpu')
     batch_size = labels.size(0)
 
@@ -65,14 +65,14 @@ def hrs_and_ndcgs_k_from_indices(top_k_indices, labels, ks):
     labels_squeezed = labels.squeeze(-1)  # (batch_size,)
     for k in ks:
         top_k = top_k_indices[:, :min(k, top_k_indices.size(1))]  # (batch_size, k)
-        hit = torch.isin(labels_squeezed, top_k)  # (batch_size,)
+        hit = (top_k == labels.unsqueeze(1)).any(dim=1)  # (batch_size,)
         hr_val = hit.float().mean().item()
         hr.append(hr_val)
 
     # 计算NDCG
     ndcg = []
     max_ks = max(ks)
-    hit = (labels == top_k_indices).int()  # (batch_size, max_ks)
+    hit = (labels.unsqueeze(1) == top_k_indices).int()  # (batch_size, max_ks)
     for k in ks:
         max_dcg = dcg(torch.tensor([1] + [0] * (k - 1)))  # 理想 DCG
         predict_dcg = dcg(hit[:, :k])  # 预测 DCG
