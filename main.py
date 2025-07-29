@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
@@ -224,7 +224,7 @@ def main(args):
     val_data_loader = val_data.get_pytorch_dataloaders()
     test_data_loader = test_data.get_pytorch_dataloaders()
 
-    rec_diffu_joint_model = create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi)
+    rec_diffu_joint_model = create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi, poi_to_tile)
 
     best_model, test_results = model_train(tra_data_loader, val_data_loader, test_data_loader, rec_diffu_joint_model, args, logger)
 

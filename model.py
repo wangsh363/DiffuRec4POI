@@ -181,7 +181,7 @@ class TilePosEnc(nn.Module):
         return tile_embeds + pe
 
 class Att_Diffuse_model(nn.Module):
-    def __init__(self, diffu, args, quadkey_vocab_size, tile_vocab_size, tile_to_poi):
+    def __init__(self, diffu, args, quadkey_vocab_size, tile_vocab_size, tile_to_poi, poi_to_tile):
         super(Att_Diffuse_model, self).__init__()
         self.emb_dim = args.hidden_size
         self.item_num = args.item_num
@@ -198,6 +198,10 @@ class Att_Diffuse_model(nn.Module):
         self.quadkey_embeddings = nn.Embedding(quadkey_vocab_size, self.emb_dim)
         self.tile_embeddings = nn.Embedding(tile_vocab_size, self.emb_dim, padding_idx=self.PAD_IDX)
         self.tile_to_poi = tile_to_poi  # 存储瓦片到POI的映射
+
+        self.poi_to_tile_tensor = torch.full((self.item_num + 1,), fill_value=-1, dtype=torch.long)
+        for poi_idx, tile_idx in poi_to_tile.items():
+            self.poi_to_tile_tensor[poi_idx] = tile_idx
 
         self.embed_dropout = nn.Dropout(args.emb_dropout)
         self.position_embeddings = nn.Embedding(args.max_len, args.hidden_size)
@@ -323,6 +327,35 @@ class Att_Diffuse_model(nn.Module):
             embeddings = self.item_embeddings.weight
             arcface_loss = self.arcface_loss_poi
         return arcface_loss(rep_diffu, embeddings, labels)
+    
+    def loss_two_stage(self, rep_tile, rep_poi, tile_labels, poi_labels, alpha=0):
+        # (1) Tile-level scores and loss
+        tile_scores = torch.matmul(rep_tile, self.tile_embeddings.weight.t())  # [B, T]
+        tile_loss = self.loss_ce(tile_scores, tile_labels.squeeze(-1))
+
+        # (2) POI-level scores
+        poi_scores = torch.matmul(rep_poi, self.item_embeddings.weight.t())  # [B, P]
+
+        # (3) 使用提前构造好的 self.poi_to_tile_tensor
+        # [num_pois] -> [1, num_pois] -> [B, num_pois]
+        poi_tile_indices = self.poi_to_tile_tensor.to(rep_poi.device).unsqueeze(0).expand(rep_poi.size(0), -1)  # [B, P]
+
+        # [B, T] detach，防止 tile 分支反向传播影响
+        tile_scores_detached = tile_scores.detach()
+        # tile_scores_detached = tile_scores
+
+        # poi_tile_scores: [B, P]，每个 poi 的 tile 得分（广播 + gather）
+        poi_tile_scores = torch.gather(tile_scores_detached, dim=1, index=poi_tile_indices)
+
+        # (4) 加权融合 POI 得分
+        final_poi_scores = poi_scores + alpha * poi_tile_scores
+
+        # (5) POI 层级的交叉熵损失
+        poi_loss = self.loss_ce(final_poi_scores, poi_labels.squeeze(-1))
+
+        # (6) 总损失
+        return tile_loss, poi_loss, tile_scores, poi_scores, final_poi_scores
+
 
     # sequence是输入的序列，最后一个数据是[0, 时间]，前面的是历史交互元组(物品，时间)。tag是label标签。
     # train_flag表示是否为训练模式
@@ -413,65 +446,65 @@ class Att_Diffuse_model(nn.Module):
                 poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
             )
 
-            # 瓦片排序：生成Tile Ranking List
-            tile_scores = torch.matmul(tile_rep_diffu, self.tile_embeddings.weight.t())
-            _, top_k_tiles = torch.topk(tile_scores, k=self.top_k_tiles, dim=-1)  # Top K瓦片
+            # # 瓦片排序：生成Tile Ranking List
+            # tile_scores = torch.matmul(tile_rep_diffu, self.tile_embeddings.weight.t())
+            # _, top_k_tiles = torch.topk(tile_scores, k=self.top_k_tiles, dim=-1)  # Top K瓦片
 
-            # 从 Top-K 瓦片中提取候选 POI，并计算权重
-            batch_size = top_k_tiles.size(0)
-            candidate_pois = []
-            poi_weights = []  # 记录每个候选 POI 的权重
-            for i in range(batch_size):
-                tile_ids = top_k_tiles[i].cpu().numpy()
-                poi_set = set()
-                poi_weight_dict = {}
-                for rank, tile_id in enumerate(tile_ids):
-                    weight = 1.0 / (rank / 20 + 1)
-                    # weight = 1.0
-                    # if tile_id == unk_tile_id:
-                    #     continue  # 跳过 <unk> 瓦片
-                    if tile_id in self.tile_to_poi and self.tile_to_poi[tile_id]:
-                        for poi_id in self.tile_to_poi[tile_id]:
-                            if poi_id >= self.item_num + 1 or poi_id < 0:
-                                print(f"警告: 无效 POI ID {poi_id} 在瓦片 {tile_id}，跳过")
-                                continue
-                            poi_set.add(poi_id)
-                            poi_weight_dict[poi_id] = poi_weight_dict.get(poi_id, 0.0) + weight
-                candidate_pois.append(list(poi_set))
-                poi_weights.append([poi_weight_dict.get(poi_id, 0.0) for poi_id in poi_set])
+            # # 从 Top-K 瓦片中提取候选 POI，并计算权重
+            # batch_size = top_k_tiles.size(0)
+            # candidate_pois = []
+            # poi_weights = []  # 记录每个候选 POI 的权重
+            # for i in range(batch_size):
+            #     tile_ids = top_k_tiles[i].cpu().numpy()
+            #     poi_set = set()
+            #     poi_weight_dict = {}
+            #     for rank, tile_id in enumerate(tile_ids):
+            #         weight = 1.0 / (rank / 20 + 1)
+            #         # weight = 1.0
+            #         # if tile_id == unk_tile_id:
+            #         #     continue  # 跳过 <unk> 瓦片
+            #         if tile_id in self.tile_to_poi and self.tile_to_poi[tile_id]:
+            #             for poi_id in self.tile_to_poi[tile_id]:
+            #                 if poi_id >= self.item_num + 1 or poi_id < 0:
+            #                     print(f"警告: 无效 POI ID {poi_id} 在瓦片 {tile_id}，跳过")
+            #                     continue
+            #                 poi_set.add(poi_id)
+            #                 poi_weight_dict[poi_id] = poi_weight_dict.get(poi_id, 0.0) + weight
+            #     candidate_pois.append(list(poi_set))
+            #     poi_weights.append([poi_weight_dict.get(poi_id, 0.0) for poi_id in poi_set])
 
-            # 生成候选 POI 嵌入和权重张量
-            max_candidates = max(len(cands) for cands in candidate_pois) if candidate_pois else 1
-            candidate_poi_indices = torch.zeros(batch_size, max_candidates, dtype=torch.long, device=items.device)
-            candidate_poi_weights = torch.zeros(batch_size, max_candidates, device=items.device)  # 默认权重为 1
-            for i, cands in enumerate(candidate_pois):
-                for j, poi_id in enumerate(cands):
-                    if not (0 <= poi_id <= self.item_num):
-                        print(f"无效 POI ID: {poi_id} 在 batch {i}, 最大有效 ID 为 {self.item_num}")
-                        poi_id = -1
-                    candidate_poi_indices[i, j] = poi_id
-                    assert len(poi_weights[i]) > j, f"POI 权重列表长度不足: {len(poi_weights[i])} < {j}"
-                    candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 0.0
-                for j in range(len(cands), max_candidates):
-                    candidate_poi_indices[i, j] = self.PAD_IDX
-                    candidate_poi_weights[i, j] = 0.0
+            # # 生成候选 POI 嵌入和权重张量
+            # max_candidates = max(len(cands) for cands in candidate_pois) if candidate_pois else 1
+            # candidate_poi_indices = torch.zeros(batch_size, max_candidates, dtype=torch.long, device=items.device)
+            # candidate_poi_weights = torch.zeros(batch_size, max_candidates, device=items.device)  # 默认权重为 1
+            # for i, cands in enumerate(candidate_pois):
+            #     for j, poi_id in enumerate(cands):
+            #         if not (0 <= poi_id <= self.item_num):
+            #             print(f"无效 POI ID: {poi_id} 在 batch {i}, 最大有效 ID 为 {self.item_num}")
+            #             poi_id = -1
+            #         candidate_poi_indices[i, j] = poi_id
+            #         assert len(poi_weights[i]) > j, f"POI 权重列表长度不足: {len(poi_weights[i])} < {j}"
+            #         candidate_poi_weights[i, j] = poi_weights[i][j] if j < len(poi_weights[i]) else 0.0
+            #     for j in range(len(cands), max_candidates):
+            #         candidate_poi_indices[i, j] = self.PAD_IDX
+            #         candidate_poi_weights[i, j] = 0.0
 
-            # 生成候选 POI 嵌入
-            candidate_poi_embeds = self.item_embeddings(candidate_poi_indices)  # [batch_size, max_candidates, emb_dim]
+            # # 生成候选 POI 嵌入
+            # candidate_poi_embeds = self.item_embeddings(candidate_poi_indices)  # [batch_size, max_candidates, emb_dim]
 
-            # 计算 POI 分数，应用权重
-            poi_scores = torch.matmul(poi_rep_diffu.unsqueeze(1), candidate_poi_embeds.transpose(-1, -2)).squeeze(1)
-            # 应用权重调整 POI 分数
-            poi_scores = poi_scores + 0.2 * (candidate_poi_weights)
-            mask = (candidate_poi_indices == self.PAD_IDX)
-            poi_scores = poi_scores.masked_fill(mask, -1e9)  # [batch_size, max_candidates]
-            _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
-            top_k_pois = torch.take_along_dim(candidate_poi_indices, top_k_pois, dim=1)
+            # # 计算 POI 分数，应用权重
+            # poi_scores = torch.matmul(poi_rep_diffu.unsqueeze(1), candidate_poi_embeds.transpose(-1, -2)).squeeze(1)
+            # # 应用权重调整 POI 分数
+            # poi_scores = poi_scores + 0.2 * (candidate_poi_weights)
+            # mask = (candidate_poi_indices == self.PAD_IDX)
+            # poi_scores = poi_scores.masked_fill(mask, -1e9)  # [batch_size, max_candidates]
+            # _, top_k_pois = torch.topk(poi_scores, k=self.top_k_pois, dim=-1)
+            # top_k_pois = torch.take_along_dim(candidate_poi_indices, top_k_pois, dim=1)
 
-            return top_k_tiles, top_k_pois, poi_rep_diffu, tile_rep_diffu
+            return poi_rep_diffu, tile_rep_diffu
 
 
-def create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi):
+def create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi, poi_to_tile):
     diffu_pre = DiffuRec(args)
-    return Att_Diffuse_model(diffu_pre, args, quadkey_vocab_size, tile_vocab_size, tile_to_poi)
+    return Att_Diffuse_model(diffu_pre, args, quadkey_vocab_size, tile_vocab_size, tile_to_poi, poi_to_tile)
 
