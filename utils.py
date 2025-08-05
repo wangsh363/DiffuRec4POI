@@ -9,7 +9,7 @@ from collections import defaultdict
 import pickle
 import os
 
-def save_vocab_cache(cache_dir, dataset_name, quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile):
+def save_vocab_cache(cache_dir, dataset_name, quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list):
     """保存词汇表和映射到 pickle 文件"""
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
@@ -20,7 +20,8 @@ def save_vocab_cache(cache_dir, dataset_name, quadkey_vocab, tile_vocab, tiles, 
         'tile_vocab': tile_vocab,
         'tiles': tiles,
         'tile_to_poi': tile_to_poi,
-        'poi_to_tile': poi_to_tile
+        'poi_to_tile': poi_to_tile,
+        'tile_coords_list': tile_coords_list
     }
     with open(cache_path, 'wb') as f:
         pickle.dump(cache_data, f)
@@ -35,7 +36,7 @@ def load_vocab_cache(cache_dir, dataset_name):
             cache_data = pickle.load(f)
         print(f"从缓存加载词汇表: {cache_path}")
         return (cache_data['quadkey_vocab'], cache_data['tile_vocab'],
-                cache_data['tiles'], cache_data['tile_to_poi'], cache_data['poi_to_tile'])
+                cache_data['tiles'], cache_data['tile_to_poi'], cache_data['poi_to_tile'], cache_data['tile_coords_list'])
     else:
         print(f"缓存文件不存在: {cache_path}")
         return None
@@ -238,6 +239,7 @@ def build_tile_vocab(data_dict, max_depth=10, max_items=50):
     # tile_vocab[unk_tile_id] = None
     tile_to_poi = {tile.id: tile.poi_ids for tile in tiles}
     tile_to_poi[0] = set()
+    tile_coords_list = [[(tile.boundary[1] + tile.boundary[3]) / 2, (tile.boundary[0] + tile.boundary[2]) / 2] for tile in tiles]
     # tile_to_poi[unk_tile_id] = set()
 
     poi_to_tile = {}
@@ -275,7 +277,7 @@ def build_tile_vocab(data_dict, max_depth=10, max_items=50):
         #     poi_to_tile[poi_id] = unk_tile_id
         #     tile_to_poi[unk_tile_id].add(poi_id)
 
-    return tile_vocab, tiles, tile_to_poi, poi_to_tile
+    return tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list
 
 
 def build_data_vocabs(data_dict, cache_dir='./cache', dataset_name='gowalla'):
@@ -286,16 +288,16 @@ def build_data_vocabs(data_dict, cache_dir='./cache', dataset_name='gowalla'):
 
     # 如果没有缓存，重新计算
     quadkey_vocab = build_quadkey_vocab(data_dict)
-    tile_vocab, tiles, tile_to_poi, poi_to_tile = build_tile_vocab(data_dict)
+    tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list = build_tile_vocab(data_dict)
 
     # 保存到缓存
-    save_vocab_cache(cache_dir, dataset_name, quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile)
+    save_vocab_cache(cache_dir, dataset_name, quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list)
 
-    return quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile
+    return quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list
 
 
 class TrainDataset(data_utils.Dataset):
-    def __init__(self, id2seq, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, id2seq, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
         self.id2seq = id2seq
         self.max_len = max_len
         self.quadkey_vocab = quadkey_vocab
@@ -303,7 +305,8 @@ class TrainDataset(data_utils.Dataset):
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
-        self.lod = lod
+        self.tile_coords_list = tile_coords_list
+        # self.lod = lod
         # self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
@@ -404,6 +407,7 @@ class TrainDataset(data_utils.Dataset):
         # pad_index = self.quadkey_vocab['<pad>']
         # quadkey_indices = [indices + [pad_index] * (max_ngram_len - len(indices)) for indices in quadkey_indices]
         tile_ids = [self.poi_to_tile.get(key) for key in items]
+        tile_coords = [self.tile_coords_list[tile_id - 1] for tile_id in tile_ids]
         quadkey_indices = []
         return (torch.LongTensor(items),
                 torch.LongTensor(timestamps),
@@ -412,14 +416,17 @@ class TrainDataset(data_utils.Dataset):
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(labels),
                 torch.LongTensor(tile_labels),
-                torch.FloatTensor(coords))
+                torch.FloatTensor(coords),
+                torch.FloatTensor(tile_coords)
+                )
 
     def _getseq(self, idx):
         return self.id2seq[idx]
 
 
 class Data_Train:
-    def __init__(self, data_train, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile):
+    def __init__(self, data_train, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list):
+        """初始化训练数据集"""
         self.u2seq = data_train
         self.max_len = args.max_len
         self.batch_size = args.batch_size
@@ -428,6 +435,7 @@ class Data_Train:
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
+        self.tile_coords_list = tile_coords_list
         # self.smap_reverse = smap_reverse
         self.split_onebyone()
         self.dataset_name = args.dataset
@@ -444,11 +452,11 @@ class Data_Train:
                 idx += 1
 
     def get_pytorch_dataloaders(self):
-        dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True, collate_fn=self.collate_fn)
 
     def collate_fn(self, batch):
-        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords, tile_coords = zip(*batch)
         return (torch.stack(items),
                 torch.stack(timestamps),
                 torch.stack(uids),
@@ -456,10 +464,12 @@ class Data_Train:
                 torch.stack(tile_ids),
                 torch.stack(labels),
                 torch.stack(tile_labels),
-                torch.stack(coords))
+                torch.stack(coords),
+                torch.stack(tile_coords)
+                )
 
 class ValDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, u2seq, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
         self.u2seq = u2seq
         self.users = sorted(self.u2seq.keys())
         self.u2answer = u2answer
@@ -469,7 +479,8 @@ class ValDataset(data_utils.Dataset):
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
-        self.lod = lod
+        self.tile_coords_list = tile_coords_list
+        # self.lod = lod
         # self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
@@ -541,6 +552,7 @@ class ValDataset(data_utils.Dataset):
         # quadkeys, tile_ids, coords = self.precomputed_data[index]
         coords = [[x[3], x[4]] for x in seq]
         tile_ids = [self.poi_to_tile.get(key) for key in items]
+        tile_coords = [self.tile_coords_list[tile_id - 1] for tile_id in tile_ids]
         # unk_index = self.quadkey_vocab['<unk>']
         # quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
         # max_ngram_len = max(len(indices) for indices in quadkey_indices)
@@ -554,11 +566,12 @@ class ValDataset(data_utils.Dataset):
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
                 torch.LongTensor(tile_labels),
-                torch.FloatTensor(coords))
+                torch.FloatTensor(coords),
+                torch.FloatTensor(tile_coords))
 
 
 class Data_Val:
-    def __init__(self, data_train, data_val, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile):
+    def __init__(self, data_train, data_val, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list):
         self.batch_size = args.batch_size
         self.u2seq = data_train
         self.u2answer = data_val
@@ -568,17 +581,18 @@ class Data_Val:
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
+        self.tile_coords_list = tile_coords_list
         # self.smap_reverse = smap_reverse
         self.dataset_name = args.dataset
         self.cache_dir = './cache'
 
     def get_pytorch_dataloaders(self):
-        dataset = ValDataset(self.u2seq, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = ValDataset(self.u2seq, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
 
     def collate_fn(self, batch):
-        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords, tile_coords = zip(*batch)
         return (torch.stack(items),
                 torch.stack(timestamps),
                 torch.stack(uids),
@@ -586,11 +600,13 @@ class Data_Val:
                 torch.stack(tile_ids),
                 torch.stack(labels),
                 torch.stack(tile_labels),
-                torch.stack(coords))
+                torch.stack(coords),
+                torch.stack(tile_coords)
+                )
 
 
 class TestDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2_seq_add, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, lod=17, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, u2seq, u2_seq_add, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
         self.u2seq = u2seq
         self.u2seq_add = u2_seq_add
         self.users = sorted(self.u2seq.keys())
@@ -601,7 +617,8 @@ class TestDataset(data_utils.Dataset):
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
-        self.lod = lod
+        # self.lod = lod
+        self.tile_coords_list = tile_coords_list
         # self.smap_reverse = smap_reverse or {}
         self.cache_dir = cache_dir
         self.dataset_name = dataset_name
@@ -674,6 +691,7 @@ class TestDataset(data_utils.Dataset):
         # quadkeys, tile_ids, coords = self.precomputed_data[index]
         coords = [[x[3], x[4]] for x in seq]
         tile_ids = [self.poi_to_tile.get(key) for key in items]
+        tile_coords = [self.tile_coords_list[tile_id - 1] for tile_id in tile_ids]
         # unk_index = self.quadkey_vocab['<unk>']
         # quadkey_indices = [[self.quadkey_vocab[token] if token in self.quadkey_vocab else unk_index for token in qk] for qk in quadkeys]
         # max_ngram_len = max(len(indices) for indices in quadkey_indices)
@@ -687,11 +705,13 @@ class TestDataset(data_utils.Dataset):
                 torch.LongTensor(tile_ids),
                 torch.LongTensor(answer),
                 torch.LongTensor(tile_labels),
-                torch.FloatTensor(coords))
+                torch.FloatTensor(coords),
+                torch.FloatTensor(tile_coords)
+                )
 
 
 class Data_Test:
-    def __init__(self, data_train, data_val, data_test, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile):
+    def __init__(self, data_train, data_val, data_test, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list):
         self.batch_size = args.batch_size
         self.u2seq = data_train
         self.u2seq_add = data_val
@@ -702,17 +722,18 @@ class Data_Test:
         self.tile_vocab_size = tile_vocab_size
         self.tile_to_poi = tile_to_poi
         self.poi_to_tile = poi_to_tile
+        self.tile_coords_list = tile_coords_list
         # self.smap_reverse = smap_reverse or {}
         self.dataset_name = args.dataset
         self.cache_dir = './cache'
 
     def get_pytorch_dataloaders(self):
-        dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
 
     def collate_fn(self, batch):
-        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords = zip(*batch)
+        items, timestamps, uids, quadkey_indices, tile_ids, labels, tile_labels, coords, tile_coords = zip(*batch)
         return (torch.stack(items),
                 torch.stack(timestamps),
                 torch.stack(uids),
@@ -720,7 +741,9 @@ class Data_Test:
                 torch.stack(tile_ids),
                 torch.stack(labels),
                 torch.stack(tile_labels),
-                torch.stack(coords))
+                torch.stack(coords),
+                torch.stack(tile_coords)
+                )
 
 
 class CHLSDataset(data_utils.Dataset):

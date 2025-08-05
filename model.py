@@ -328,7 +328,7 @@ class Att_Diffuse_model(nn.Module):
             arcface_loss = self.arcface_loss_poi
         return arcface_loss(rep_diffu, embeddings, labels)
     
-    def loss_two_stage(self, rep_tile, rep_poi, tile_labels, poi_labels, alpha=0):
+    def loss_two_stage(self, rep_tile, rep_poi, tile_labels, poi_labels, alpha=0.2):
         # (1) Tile-level scores and loss
         tile_scores = torch.matmul(rep_tile, self.tile_embeddings.weight.t())  # [B, T]
         tile_loss = self.loss_ce(tile_scores, tile_labels.squeeze(-1))
@@ -341,8 +341,8 @@ class Att_Diffuse_model(nn.Module):
         poi_tile_indices = self.poi_to_tile_tensor.to(rep_poi.device).unsqueeze(0).expand(rep_poi.size(0), -1)  # [B, P]
 
         # [B, T] detach，防止 tile 分支反向传播影响
-        tile_scores_detached = tile_scores.detach()
-        # tile_scores_detached = tile_scores
+        # tile_scores_detached = tile_scores.detach()
+        tile_scores_detached = tile_scores
 
         # poi_tile_scores: [B, P]，每个 poi 的 tile 得分（广播 + gather）
         poi_tile_scores = torch.gather(tile_scores_detached, dim=1, index=poi_tile_indices)
@@ -351,10 +351,11 @@ class Att_Diffuse_model(nn.Module):
         final_poi_scores = poi_scores + alpha * poi_tile_scores
 
         # (5) POI 层级的交叉熵损失
-        poi_loss = self.loss_ce(final_poi_scores, poi_labels.squeeze(-1))
+        poi_loss = self.loss_ce(poi_scores, poi_labels.squeeze(-1))
+        joint_loss = self.loss_ce(final_poi_scores, poi_labels.squeeze(-1))
 
         # (6) 总损失
-        return tile_loss, poi_loss, tile_scores, poi_scores, final_poi_scores
+        return tile_loss, poi_loss, joint_loss, tile_scores, poi_scores, final_poi_scores
 
 
     # sequence是输入的序列，最后一个数据是[0, 时间]，前面的是历史交互元组(物品，时间)。tag是label标签。

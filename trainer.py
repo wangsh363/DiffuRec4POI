@@ -8,6 +8,113 @@ import os
 import time
 import pickle
 
+class TwoStagePOITrainer:
+    def __init__(self, model, mode='pretrain'):
+        self.model = model
+        self.mode = mode  # 'pretrain_tile', 'pretrain_poi', 'joint'
+
+    def train_step(self, rep_tile, rep_poi, tile_labels, poi_labels):
+
+        # 获取损失及得分
+        tile_loss, poi_loss, joint_loss, *_ = self.model.loss_two_stage(rep_tile, rep_poi, tile_labels, poi_labels)
+
+        if self.mode == 'pretrain':
+            loss = tile_loss + poi_loss
+            loss.backward()
+        elif self.mode == 'pretrain_poi':
+            loss = poi_loss
+            loss.backward()
+        elif self.mode == 'pretrain_tile':
+            loss = tile_loss
+            loss.backward()
+        elif self.mode == 'joint':
+            loss = joint_loss
+            loss.backward()
+        else:
+            raise ValueError(f"Unknown mode: {self.mode}")
+
+        # loss.backward()
+        # self.optimizer_tile.step()
+        # self.optimizer_poi.step()
+        return {
+            'tile_loss': 0.0 if self.mode == 'pretrain_poi' else tile_loss.item(),
+            'poi_loss': 0.0 if self.mode == 'pretrain_tile' else poi_loss.item(),
+            'joint_loss': 0.0 if self.mode != 'joint' else joint_loss.item()
+        }
+
+    def switch_mode(self, mode):
+        assert mode in ['pretrain_tile', 'pretrain_poi', 'joint']
+        self.mode = mode
+        print(f"Switched training mode to: {mode}")
+
+
+class DynamicLossMonitor:
+    def __init__(self, 
+                 tile_patience=3, tile_threshold=0.2,
+                 poi_patience=3, poi_threshold=0.2):
+        self.tile_patience = tile_patience
+        self.tile_threshold = tile_threshold
+        self.poi_patience = poi_patience
+        self.poi_threshold = poi_threshold
+
+        self.tile_history = []
+        self.poi_history = []
+        self.tile_done = False
+        self.poi_done = False
+        self.current_mode = 'pretrain'  # new initial mode
+        self.switch_epoch_tile = None
+        self.switch_epoch_poi = None
+        self.switch_epoch_joint = None
+
+    def update_and_check(self, trainer, epoch, logger, tile_loss, poi_loss):
+        self.tile_history.append(tile_loss)
+        self.poi_history.append(poi_loss)
+
+        # Check tile warm-up done
+        if not self.tile_done and len(self.tile_history) >= self.tile_patience:
+            recent_tile = self.tile_history[-self.tile_patience:]
+            if all(l < self.tile_threshold for l in recent_tile):
+                self.tile_done = True
+                self.switch_epoch_tile = epoch
+                print(f"[Monitor] Tile warm-up done at epoch {epoch}")
+                logger.info(f"[Monitor] Tile warm-up done at epoch {epoch}")
+
+        # Check poi warm-up done
+        if not self.poi_done and len(self.poi_history) >= self.poi_patience:
+            recent_poi = self.poi_history[-self.poi_patience:]
+            if all(l < self.poi_threshold for l in recent_poi):
+                self.poi_done = True
+                self.switch_epoch_poi = epoch
+                print(f"[Monitor] POI warm-up done at epoch {epoch}")
+                logger.info(f"[Monitor] POI warm-up done at epoch {epoch}")
+
+        # Determine next mode
+        if self.current_mode == 'pretrain':
+            if self.tile_done and not self.poi_done:
+                self.current_mode = 'pretrain_poi'
+                trainer.switch_mode('pretrain_poi')
+                print(f"[Monitor] Switched to pretrain_poi at epoch {epoch}")
+                logger.info(f"[Monitor] Switched to pretrain_poi at epoch {epoch}")
+            elif self.poi_done and not self.tile_done:
+                self.current_mode = 'pretrain_tile'
+                trainer.switch_mode('pretrain_tile')
+                print(f"[Monitor] Switched to pretrain_tile at epoch {epoch}")
+                logger.info(f"[Monitor] Switched to pretrain_tile at epoch {epoch}")
+            elif self.tile_done and self.poi_done:
+                self.current_mode = 'joint'
+                trainer.switch_mode('joint')
+                self.switch_epoch_joint = epoch
+                print(f"[Monitor] Switched to joint at epoch {epoch}")
+                logger.info(f"[Monitor] Switched to joint at epoch {epoch}")
+
+        elif self.current_mode in ['pretrain_tile', 'pretrain_poi']:
+            if self.tile_done and self.poi_done:
+                self.current_mode = 'joint'
+                trainer.switch_mode('joint')
+                self.switch_epoch_joint = epoch
+                print(f"[Monitor] Switched to joint at epoch {epoch}")
+                logger.info(f"[Monitor] Switched to joint at epoch {epoch}")
+
 
 def optimizers(model, args):
     if args.optimizer.lower() == 'adam':
@@ -127,8 +234,12 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     is_parallel = args.num_gpu > 1
     if is_parallel:
         model_joint = nn.DataParallel(model_joint)
-    optimizer = optimizers(model_joint, args)
-    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=args.gamma)
+    # optimizer = optimizers(model_joint, args)
+    # lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=args.gamma)
+    # optimizer_tile = optim.Adam(model_joint.diffu_tile.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer_poi  = optim.Adam(model_joint.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    # scheduler_tile = optim.lr_scheduler.StepLR(optimizer_tile, step_size=args.decay_step, gamma=args.gamma)
+    scheduler_poi = optim.lr_scheduler.StepLR(optimizer_poi, step_size=args.decay_step, gamma=args.gamma)
     best_metrics_dict = {'Best_HR@5': 0, 'Best_NDCG@5': 0, 'Best_HR@10': 0, 'Best_NDCG@10': 0, 'Best_HR@20': 0, 'Best_NDCG@20': 0}
     best_epoch = {'Best_epoch_HR@5': 0, 'Best_epoch_NDCG@5': 0, 'Best_epoch_HR@10': 0, 'Best_epoch_NDCG@10': 0, 'Best_epoch_HR@20': 0, 'Best_epoch_NDCG@20': 0}
     best_metrics_dict_tile = {'tile_Best_HR@5': 0, 'tile_Best_NDCG@5': 0, 'tile_Best_HR@10': 0, 'tile_Best_NDCG@10': 0, 'tile_Best_HR@20': 0, 'tile_Best_NDCG@20': 0}
@@ -138,6 +249,11 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     bad_count = 0
     unk_poi_id = 0
     unk_tile_id = 0
+    monitor = DynamicLossMonitor(
+    tile_patience=3, tile_threshold=1.3,
+    poi_patience=3, poi_threshold=2.1
+    )
+    trainer = TwoStagePOITrainer(model_joint, mode='pretrain')
 
     for epoch_temp in range(epochs):
         print('Epoch: {}'.format(epoch_temp))
@@ -146,7 +262,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         flag_update = 0
         for index_temp, train_batch in enumerate(tra_data_loader):
             train_batch = [x.to(device) for x in train_batch]
-            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = train_batch
+            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords, tile_coords = train_batch
             sequence = (items, timestamps, uids, quadkeys, tiles)
             if labels.max().item() >= args.item_num + 1 or labels.min().item() < 0:
                 print(f"警告: 无效 POI labels 检测到，min={labels.min().item()}, max={labels.max().item()}, item_num={args.item_num}")
@@ -163,8 +279,10 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             if items.max().item() >= args.item_num + 1 or items.min().item() < 0:
                 print(f"警告: 无效 items 检测到，min={items.min().item()}, max={items.max().item()}, item_num={args.item_num}")
                 # items = torch.clamp(items, 0, unk_poi_id)
-            optimizer.zero_grad()
-            condition, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=coords)
+            # optimizer.zero_grad()
+            # optimizer_tile.zero_grad()
+            optimizer_poi.zero_grad()
+            condition, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=tile_coords)
             tile_rep_diffu, poi_rep_diffu = diffu_rep
             tile_weights, poi_weights = weights
             tile_t, poi_t = t
@@ -172,16 +290,39 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             # loss_diffu_tile = model_joint.loss_arcface(tile_rep_diffu, tile_labels, target_type="tile")
             # loss_diffu_tile = model_joint.loss_diffu_ce(tile_rep_diffu, tile_labels)
             # loss_diffu_poi = model_joint.loss_diffu_ce(poi_rep_diffu, labels)
-            loss_diffu_tile, loss_diffu_poi, _, _, _ = model_joint.loss_two_stage(tile_rep_diffu, poi_rep_diffu, tile_labels, labels)
+            # loss_diffu_tile, loss_diffu_poi, _, _, _, _ = model_joint.loss_two_stage(tile_rep_diffu, poi_rep_diffu, tile_labels, labels)
             # loss_all = loss_diffu_tile + loss_diffu_poi
-            loss_all = loss_diffu_tile + loss_diffu_poi
-            loss_all.backward()
-            optimizer.step()
+            # loss_all = loss_diffu_tile + loss_diffu_poi
+            logs = trainer.train_step(tile_rep_diffu, poi_rep_diffu, tile_labels, labels)
+            loss_diffu_tile = logs['tile_loss']
+            loss_diffu_poi = logs['poi_loss']
+            loss_all = logs['joint_loss']
+            # loss_all.backward()
+            # optimizer.step()
+            # if trainer.mode == 'pretrain_tile':
+            #     optimizer_tile.step()
+            # elif trainer.mode == 'pretrain_poi':
+            #     optimizer_poi.step()
+            # elif trainer.mode == 'joint':
+            #     optimizer_tile.step()
+            #     optimizer_poi.step()
+            optimizer_poi.step()
             if index_temp % int(len(tra_data_loader) / 5 + 1) == 0:
-                print('[%d/%d] Loss_all: %.4f Loss_tile: %.4f Loss_poi: %.4f' % (index_temp, len(tra_data_loader), loss_all.item(), loss_diffu_tile.item(), loss_diffu_poi.item()))
-                logger.info('[%d/%d] Loss_all: %.4f Loss_tile: %.4f Loss_poi: %.4f' % (index_temp, len(tra_data_loader), loss_all.item(), loss_diffu_tile.item(), loss_diffu_poi.item()))
-        print("loss in epoch {}: {}".format(epoch_temp, loss_all.item()))
-        lr_scheduler.step()
+                print('[%d/%d] Loss_all: %.4f Loss_tile: %.4f Loss_poi: %.4f' % (index_temp, len(tra_data_loader), loss_all, loss_diffu_tile, loss_diffu_poi))
+                logger.info('[%d/%d] Loss_all: %.4f Loss_tile: %.4f Loss_poi: %.4f' % (index_temp, len(tra_data_loader), loss_all, loss_diffu_tile, loss_diffu_poi))
+
+        monitor.update_and_check(
+            trainer, epoch_temp, logger,
+            tile_loss=logs['tile_loss'],
+            poi_loss=logs['poi_loss']
+        )
+        print("loss in epoch {}: {}".format(epoch_temp, loss_all))
+        # if trainer.mode != 'pretrain_tile':
+        #     scheduler_poi.step()
+        # elif trainer.mode != 'pretrain_poi':
+        #     scheduler_tile.step()
+        scheduler_poi.step()
+        # lr_scheduler.step()
         if epoch_temp != 0 and epoch_temp % args.eval_interval == 0:
             print('start predicting: ', datetime.datetime.now())
             logger.info('start predicting: {}'.format(datetime.datetime.now()))
@@ -192,9 +333,9 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 metrics_dict_tile = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
-                    items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = val_batch
+                    items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords, tile_coords = val_batch
                     sequence = (items, timestamps, uids, quadkeys, tiles)
-                    poi_rep, tile_rep = model_joint(sequence, labels, tile_labels, train_flag=False, coords=coords)
+                    poi_rep, tile_rep = model_joint(sequence, labels, tile_labels, train_flag=False, coords=tile_coords)
                     # valid_mask = labels.squeeze(-1) != unk_poi_id
                     # valid_mask_tile = tile_labels.squeeze(-1) != unk_tile_id
                     # if not valid_mask.all():
@@ -205,7 +346,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     # tile_labels = tile_labels[valid_mask_tile]
 
                     # scores_poi = model_joint.diffu_rep_pre(poi_rep)
-                    _, _, scores_tile, scores_poi, final_scores_poi = model_joint.loss_two_stage(tile_rep, poi_rep, tile_labels, labels)
+                    _, _, _, scores_tile, scores_poi, final_scores_poi = model_joint.loss_two_stage(tile_rep, poi_rep, tile_labels, labels)
                     metrics_poi = hrs_and_ndcgs_k(scores_poi, labels, metric_ks)
                     for k, v in metrics_poi.items():
                         metrics_dict_poi[k].append(v)
@@ -218,56 +359,80 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     for k, v in metrics_tile.items():
                         metrics_dict_tile[k].append(v)
             
-            for key_temp, values_temp in metrics_dict_poi.items():
-                values_mean = round(np.mean(values_temp) * 100, 4)
-                if values_mean > best_metrics_dict_poi['poi_Best_' + key_temp]:
-                    flag_update_poi = 1
-                    bad_count_poi = 0
-                    best_metrics_dict_poi['poi_Best_' + key_temp] = values_mean
-                    best_epoch_poi['poi_Best_epoch_' + key_temp] = epoch_temp
+            # for key_temp, values_temp in metrics_dict_poi.items():
+            #     values_mean = round(np.mean(values_temp) * 100, 4)
+            #     if values_mean > best_metrics_dict_poi['poi_Best_' + key_temp]:
+            #         flag_update_poi = 1
+            #         bad_count_poi = 0
+            #         best_metrics_dict_poi['poi_Best_' + key_temp] = values_mean
+            #         best_epoch_poi['poi_Best_epoch_' + key_temp] = epoch_temp
 
-            for key_temp, values_temp in metrics_dict.items():
-                values_mean = round(np.mean(values_temp) * 100, 4)
-                if values_mean > best_metrics_dict['Best_' + key_temp]:
-                    flag_update = 1
-                    bad_count = 0
-                    best_metrics_dict['Best_' + key_temp] = values_mean
-                    best_epoch['Best_epoch_' + key_temp] = epoch_temp
+            # for key_temp, values_temp in metrics_dict.items():
+            #     values_mean = round(np.mean(values_temp) * 100, 4)
+            #     if values_mean > best_metrics_dict['Best_' + key_temp]:
+            #         flag_update = 1
+            #         bad_count = 0
+            #         best_metrics_dict['Best_' + key_temp] = values_mean
+            #         best_epoch['Best_epoch_' + key_temp] = epoch_temp
 
-            for key_temp, values_temp in metrics_dict_tile.items():
-                values_mean = round(np.mean(values_temp) * 100, 4)
-                if values_mean > best_metrics_dict_tile['tile_Best_' + key_temp]:
-                    flag_update_tile = 1
-                    bad_count_tile = 0
-                    best_metrics_dict_tile['tile_Best_' + key_temp] = values_mean
-                    best_epoch_tile['tile_Best_epoch_' + key_temp] = epoch_temp
+            # for key_temp, values_temp in metrics_dict_tile.items():
+            #     values_mean = round(np.mean(values_temp) * 100, 4)
+            #     if values_mean > best_metrics_dict_tile['tile_Best_' + key_temp]:
+            #         flag_update_tile = 1
+            #         bad_count_tile = 0
+            #         best_metrics_dict_tile['tile_Best_' + key_temp] = values_mean
+            #         best_epoch_tile['tile_Best_epoch_' + key_temp] = epoch_temp
             
-            if flag_update_poi == 0:
-                bad_count_poi += 1
-            else:
-                print(best_metrics_dict_poi)
-                print(best_epoch_poi)
-                logger.info(best_metrics_dict_poi)
-                logger.info(best_epoch_poi)
+            if trainer.mode != 'pretrain_tile':
+                for key_temp, values_temp in metrics_dict_poi.items():
+                    values_mean = round(np.mean(values_temp) * 100, 4)
+                    if values_mean > best_metrics_dict_poi['poi_Best_' + key_temp]:
+                        flag_update_poi = 1
+                        bad_count_poi = 0
+                        best_metrics_dict_poi['poi_Best_' + key_temp] = values_mean
+                        best_epoch_poi['poi_Best_epoch_' + key_temp] = epoch_temp
+                if flag_update_poi == 0:
+                    bad_count_poi += 1
+                else:
+                    print(best_metrics_dict_poi)
+                    print(best_epoch_poi)
+                    logger.info(best_metrics_dict_poi)
+                    logger.info(best_epoch_poi)
 
-            if flag_update == 0:
-                bad_count += 1
-            else:
-                print(best_metrics_dict)
-                print(best_epoch)
-                logger.info(best_metrics_dict)
-                logger.info(best_epoch)
-                best_model = copy.deepcopy(model_joint)
-            if bad_count >= args.patience:
-                break
+            if trainer.mode == 'joint':
+                for key_temp, values_temp in metrics_dict.items():
+                    values_mean = round(np.mean(values_temp) * 100, 4)
+                    if values_mean > best_metrics_dict['Best_' + key_temp]:
+                        flag_update = 1
+                        bad_count = 0
+                        best_metrics_dict['Best_' + key_temp] = values_mean
+                        best_epoch['Best_epoch_' + key_temp] = epoch_temp
+                if flag_update == 0:
+                    bad_count += 1
+                else:
+                    print(best_metrics_dict)
+                    print(best_epoch)
+                    logger.info(best_metrics_dict)
+                    logger.info(best_epoch)
+                    best_model = copy.deepcopy(model_joint)
+                if bad_count >= args.patience:
+                    break
 
-            if flag_update_tile == 0:
-                bad_count_tile += 1
-            else:
-                print(best_metrics_dict_tile)
-                print(best_epoch_tile)
-                logger.info(best_metrics_dict_tile)
-                logger.info(best_epoch_tile)
+            if trainer.mode != 'pretrain_poi':
+                for key_temp, values_temp in metrics_dict_tile.items():
+                    values_mean = round(np.mean(values_temp) * 100, 4)
+                    if values_mean > best_metrics_dict_tile['tile_Best_' + key_temp]:
+                        flag_update_tile = 1
+                        bad_count_tile = 0
+                        best_metrics_dict_tile['tile_Best_' + key_temp] = values_mean
+                        best_epoch_tile['tile_Best_epoch_' + key_temp] = epoch_temp
+                if flag_update_tile == 0:
+                    bad_count_tile += 1
+                else:
+                    print(best_metrics_dict_tile)
+                    print(best_epoch_tile)
+                    logger.info(best_metrics_dict_tile)
+                    logger.info(best_epoch_tile)
 
     logger.info(best_metrics_dict)
     logger.info(best_epoch)
@@ -276,34 +441,54 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     top_100_item = []
     with torch.no_grad():
         test_metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
+        test_metrics_dict_poi = {'poi_HR@5': [], 'poi_NDCG@5': [], 'poi_HR@10': [], 'poi_NDCG@10': [], 'poi_HR@20': [], 'poi_NDCG@20': []}
+        test_metrics_dict_tile = {'tile_HR@5': [], 'tile_NDCG@5': [], 'tile_HR@10': [], 'tile_NDCG@10': [], 'tile_HR@20': [], 'tile_NDCG@20': []}
+        test_metrics_dict_poi_mean = {}
+        test_metrics_dict_tile_mean = {}
         test_metrics_dict_mean = {}
         for test_batch in test_data_loader:
             test_batch = [x.to(device) for x in test_batch]
-            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = test_batch
+            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords, tile_coords = test_batch
             sequence = (items, timestamps, uids, quadkeys, tiles)
-            poi_rep, tile_rep = best_model(sequence, labels, tile_labels, train_flag=False, coords=coords)
+            poi_rep, tile_rep = best_model(sequence, labels, tile_labels, train_flag=False, coords=tile_coords)
             # valid_mask = labels.squeeze(-1) != unk_poi_id
             # if not valid_mask.all():
             #     print(f"警告: 测试集中包含 {valid_mask.size(0) - valid_mask.sum().item()} 个 <unk> 标签")
             # top_k_pois = top_k_pois[valid_mask]
             # labels = labels[valid_mask]
-            _, _, scores_tile, scores_poi, final_scores_poi = best_model.loss_two_stage(tile_rep, poi_rep, tile_labels, labels)
+            _, _, _, scores_tile, scores_poi, final_scores_poi = best_model.loss_two_stage(tile_rep, poi_rep, tile_labels, labels)
             metrics = hrs_and_ndcgs_k(final_scores_poi, labels, metric_ks)
             for k, v in metrics.items():
                 test_metrics_dict[k].append(v)
+            metrics_poi = hrs_and_ndcgs_k(scores_poi, labels, metric_ks)
+            for k, v in metrics_poi.items():
+                test_metrics_dict_poi[k].append(v)
+            metrics_tile = hrs_and_ndcgs_k(scores_tile, tile_labels, metric_ks)
+            for k, v in metrics_tile.items():
+                test_metrics_dict_tile[k].append(v)
         for key_temp, values_temp in test_metrics_dict.items():
             values_mean = round(np.mean(values_temp) * 100, 4)
             test_metrics_dict_mean[key_temp] = values_mean
+        for key_temp, values_temp in test_metrics_dict_poi.items():
+            values_mean = round(np.mean(values_temp) * 100, 4)
+            test_metrics_dict_poi_mean[key_temp] = values_mean
+        for key_temp, values_temp in test_metrics_dict_tile.items():
+            values_mean = round(np.mean(values_temp) * 100, 4)
+            test_metrics_dict_tile_mean[key_temp] = values_mean
         print('Test------------------------------------------------------')
         logger.info('Test------------------------------------------------------')
         print(test_metrics_dict_mean)
         logger.info(test_metrics_dict_mean)
+        print(test_metrics_dict_poi_mean)
+        logger.info(test_metrics_dict_poi_mean)
+        print(test_metrics_dict_tile_mean)
+        logger.info(test_metrics_dict_tile_mean)
         print('Best Eval---------------------------------------------------------')
         logger.info('Best Eval---------------------------------------------------------')
-        print(best_metrics_dict)
-        print(best_epoch)
-        logger.info(best_metrics_dict)
-        logger.info(best_epoch)
+        # print(best_metrics_dict)
+        # print(best_epoch)
+        # logger.info(best_metrics_dict)
+        # logger.info(best_epoch)
         print(args)
 
         print('saving model...')

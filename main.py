@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
@@ -31,7 +31,7 @@ parser.add_argument('--dropout', type=float, default=0.1, help='Dropout of repre
 parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout of item embedding')
 parser.add_argument("--hidden_act", default="gelu", type=str) # gelu relu
 parser.add_argument('--num_blocks', type=int, default=4, help='Number of Transformer blocks')
-parser.add_argument('--epochs', type=int, default=500, help='Number of epochs for training')  ## 500
+parser.add_argument('--epochs', type=int, default=800, help='Number of epochs for training')  ## 500
 parser.add_argument('--decay_step', type=int, default=100, help='Decay step for StepLR')
 parser.add_argument('--gamma', type=float, default=0.1, help='Gamma for StepLR')
 parser.add_argument('--metric_ks', nargs='+', type=int, default=[5, 10, 20], help='ks for Metric@k')
@@ -207,7 +207,7 @@ def main(args):
                                  poi, time_str, uid, latitude, longitude in value]
 
     # 使用缓存构建词汇表
-    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile = build_data_vocabs(
+    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list = build_data_vocabs(
         data_raw, cache_dir='./cache', dataset_name=args.dataset
     )
 
@@ -215,11 +215,11 @@ def main(args):
     tile_vocab_size = len(tile_vocab)
 
     # 传入词汇表和映射
-    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile)
+    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
     val_data = Data_Val(data_raw['train'], data_raw['val'], args, quadkey_vocab, tiles, tile_vocab_size,
-                        tile_to_poi, poi_to_tile)
+                        tile_to_poi, poi_to_tile, tile_coords_list)
     test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args, quadkey_vocab, tiles,
-                          tile_vocab_size, tile_to_poi, poi_to_tile)
+                          tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
     tra_data_loader = tra_data.get_pytorch_dataloaders()
     val_data_loader = val_data.get_pytorch_dataloaders()
     test_data_loader = test_data.get_pytorch_dataloaders()
