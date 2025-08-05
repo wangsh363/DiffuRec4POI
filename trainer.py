@@ -146,7 +146,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         flag_update = 0
         for index_temp, train_batch in enumerate(tra_data_loader):
             train_batch = [x.to(device) for x in train_batch]
-            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = train_batch
+            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords, tile_coords = train_batch
             sequence = (items, timestamps, uids, quadkeys, tiles)
             if labels.max().item() >= args.item_num + 1 or labels.min().item() < 0:
                 print(f"警告: 无效 POI labels 检测到，min={labels.min().item()}, max={labels.max().item()}, item_num={args.item_num}")
@@ -164,7 +164,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 print(f"警告: 无效 items 检测到，min={items.min().item()}, max={items.max().item()}, item_num={args.item_num}")
                 # items = torch.clamp(items, 0, unk_poi_id)
             optimizer.zero_grad()
-            condition, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=coords)
+            condition, diffu_rep, weights, t, item_rep_dis, seq_rep_dis, time_target = model_joint(sequence, labels, tile_labels, train_flag=True, coords=tile_coords)
             tile_rep_diffu, poi_rep_diffu = diffu_rep
             tile_weights, poi_weights = weights
             tile_t, poi_t = t
@@ -172,7 +172,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             # loss_diffu_tile = model_joint.loss_arcface(tile_rep_diffu, tile_labels, target_type="tile")
             # loss_diffu_tile = model_joint.loss_diffu_ce(tile_rep_diffu, tile_labels)
             # loss_diffu_poi = model_joint.loss_diffu_ce(poi_rep_diffu, labels)
-            loss_diffu_tile, loss_diffu_poi, _, _, _ = model_joint.loss_two_stage(tile_rep_diffu, poi_rep_diffu, tile_labels, labels)
+            loss_diffu_tile, loss_diffu_poi, _, _, _ = model_joint.loss_two_stage_prob(tile_rep_diffu, poi_rep_diffu, tile_labels, labels)
             # loss_all = loss_diffu_tile + loss_diffu_poi
             loss_all = loss_diffu_tile + loss_diffu_poi
             loss_all.backward()
@@ -192,9 +192,9 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 metrics_dict_tile = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
                 for val_batch in val_data_loader:
                     val_batch = [x.to(device) for x in val_batch]
-                    items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = val_batch
+                    items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords, tile_coords = val_batch
                     sequence = (items, timestamps, uids, quadkeys, tiles)
-                    poi_rep, tile_rep = model_joint(sequence, labels, tile_labels, train_flag=False, coords=coords)
+                    poi_rep, tile_rep = model_joint(sequence, labels, tile_labels, train_flag=False, coords=tile_coords)
                     # valid_mask = labels.squeeze(-1) != unk_poi_id
                     # valid_mask_tile = tile_labels.squeeze(-1) != unk_tile_id
                     # if not valid_mask.all():
@@ -205,7 +205,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     # tile_labels = tile_labels[valid_mask_tile]
 
                     # scores_poi = model_joint.diffu_rep_pre(poi_rep)
-                    _, _, scores_tile, scores_poi, final_scores_poi = model_joint.loss_two_stage(tile_rep, poi_rep, tile_labels, labels)
+                    _, _, scores_tile, scores_poi, final_scores_poi = model_joint.loss_two_stage_prob(tile_rep, poi_rep, tile_labels, labels)
                     metrics_poi = hrs_and_ndcgs_k(scores_poi, labels, metric_ks)
                     for k, v in metrics_poi.items():
                         metrics_dict_poi[k].append(v)
@@ -279,15 +279,15 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         test_metrics_dict_mean = {}
         for test_batch in test_data_loader:
             test_batch = [x.to(device) for x in test_batch]
-            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords = test_batch
+            items, timestamps, uids, quadkeys, tiles, labels, tile_labels, coords, tile_coords = test_batch
             sequence = (items, timestamps, uids, quadkeys, tiles)
-            poi_rep, tile_rep = best_model(sequence, labels, tile_labels, train_flag=False, coords=coords)
+            poi_rep, tile_rep = best_model(sequence, labels, tile_labels, train_flag=False, coords=tile_coords)
             # valid_mask = labels.squeeze(-1) != unk_poi_id
             # if not valid_mask.all():
             #     print(f"警告: 测试集中包含 {valid_mask.size(0) - valid_mask.sum().item()} 个 <unk> 标签")
             # top_k_pois = top_k_pois[valid_mask]
             # labels = labels[valid_mask]
-            _, _, scores_tile, scores_poi, final_scores_poi = best_model.loss_two_stage(tile_rep, poi_rep, tile_labels, labels)
+            _, _, scores_tile, scores_poi, final_scores_poi = best_model.loss_two_stage_prob(tile_rep, poi_rep, tile_labels, labels)
             metrics = hrs_and_ndcgs_k(final_scores_poi, labels, metric_ks)
             for k, v in metrics.items():
                 test_metrics_dict[k].append(v)

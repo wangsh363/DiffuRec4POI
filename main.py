@@ -207,7 +207,7 @@ def main(args):
                                  poi, time_str, uid, latitude, longitude in value]
 
     # 使用缓存构建词汇表
-    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile = build_data_vocabs(
+    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list = build_data_vocabs(
         data_raw, cache_dir='./cache', dataset_name=args.dataset
     )
 
@@ -215,11 +215,11 @@ def main(args):
     tile_vocab_size = len(tile_vocab)
 
     # 传入词汇表和映射
-    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile)
+    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
     val_data = Data_Val(data_raw['train'], data_raw['val'], args, quadkey_vocab, tiles, tile_vocab_size,
-                        tile_to_poi, poi_to_tile)
+                        tile_to_poi, poi_to_tile, tile_coords_list)
     test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args, quadkey_vocab, tiles,
-                          tile_vocab_size, tile_to_poi, poi_to_tile)
+                          tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
     tra_data_loader = tra_data.get_pytorch_dataloaders()
     val_data_loader = val_data.get_pytorch_dataloaders()
     test_data_loader = test_data.get_pytorch_dataloaders()

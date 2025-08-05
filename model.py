@@ -239,6 +239,9 @@ class Att_Diffuse_model(nn.Module):
         self.loss_mse = nn.MSELoss()
 
         self.tile_pos_enc = TilePosEnc(self.emb_dim, device=args.device)
+
+        self.tile_temp_log = nn.Parameter(torch.tensor(0.0))  # log(temp)
+        self.poi_temp_log = nn.Parameter(torch.tensor(0.0))
         # 初始化 <unk> 嵌入,避免与填充向量（全零）混淆。
         # with torch.no_grad():
         #     self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
@@ -355,6 +358,38 @@ class Att_Diffuse_model(nn.Module):
 
         # (6) 总损失
         return tile_loss, poi_loss, tile_scores, poi_scores, final_poi_scores
+    
+
+    def loss_two_stage_prob(self, rep_tile, rep_poi, tile_labels, poi_labels):
+        # 1. logits
+        tile_logits = torch.matmul(rep_tile, self.tile_embeddings.weight.t())  # [B, T]
+        poi_logits = torch.matmul(rep_poi, self.item_embeddings.weight.t())    # [B, P]
+
+        # 2. softmax with temperature
+        tile_temp = torch.exp(self.tile_temp_log)  # 确保 temp > 0
+        poi_temp = torch.exp(self.poi_temp_log)
+        tile_probs = torch.softmax(tile_logits / tile_temp, dim=1)             # [B, T]
+        poi_probs = torch.softmax(poi_logits / poi_temp, dim=1)                # [B, P]
+        print("tile_temp:", tile_temp.item(), "poi_temp:", poi_temp.item())
+        # tile_probs = tile_probs.detach()
+
+        # 3. gather tile_probs for each POI
+        poi_tile_indices = self.poi_to_tile_tensor.to(rep_poi.device).unsqueeze(0).expand(rep_poi.size(0), -1)
+        tile_probs_for_pois = torch.gather(tile_probs, dim=1, index=poi_tile_indices)  # [B, P]
+
+        # 4. compute joint probs
+        final_probs = tile_probs_for_pois * poi_probs                          # [B, P]
+        final_probs = final_probs / final_probs.sum(dim=1, keepdim=True)      # optional normalize
+
+        # 5. compute POI-level loss (joint)
+        target = poi_labels.squeeze(-1).unsqueeze(1)                           # [B, 1]
+        gathered_probs = torch.gather(final_probs, dim=1, index=target)       # [B, 1]
+        joint_loss = -torch.log(gathered_probs + 1e-12).mean()
+
+        # 6. compute tile-level loss
+        tile_loss = self.loss_ce(tile_logits, tile_labels.squeeze(-1))        # [B]
+
+        return tile_loss, joint_loss, tile_probs, poi_probs, final_probs
 
 
     # sequence是输入的序列，最后一个数据是[0, 时间]，前面的是历史交互元组(物品，时间)。tag是label标签。
