@@ -276,8 +276,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     top_100_item = []
     with torch.no_grad():
         test_metrics_dict = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
-        test_metrics_dict_poi = {'poi_HR@5': [], 'poi_NDCG@5': [], 'poi_HR@10': [], 'poi_NDCG@10': [], 'poi_HR@20': [], 'poi_NDCG@20': []}
-        test_metrics_dict_tile = {'tile_HR@5': [], 'tile_NDCG@5': [], 'tile_HR@10': [], 'tile_NDCG@10': [], 'tile_HR@20': [], 'tile_NDCG@20': []}
+        test_metrics_dict_poi = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
+        test_metrics_dict_tile = {'HR@5': [], 'NDCG@5': [], 'HR@10': [], 'NDCG@10': [], 'HR@20': [], 'NDCG@20': []}
         test_metrics_dict_poi_mean = {}
         test_metrics_dict_tile_mean = {}
         test_metrics_dict_mean = {}
@@ -306,10 +306,10 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             test_metrics_dict_mean[key_temp] = values_mean
         for key_temp, values_temp in test_metrics_dict_poi.items():
             values_mean = round(np.mean(values_temp) * 100, 4)
-            test_metrics_dict_poi_mean[key_temp] = values_mean
+            test_metrics_dict_poi_mean['poi_' + key_temp] = values_mean
         for key_temp, values_temp in test_metrics_dict_tile.items():
             values_mean = round(np.mean(values_temp) * 100, 4)
-            test_metrics_dict_tile_mean[key_temp] = values_mean
+            test_metrics_dict_tile_mean['tile_' + key_temp] = values_mean
         print('Test------------------------------------------------------')
         logger.info('Test------------------------------------------------------')
         print(test_metrics_dict_mean)
