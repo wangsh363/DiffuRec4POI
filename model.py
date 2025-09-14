@@ -247,9 +247,9 @@ class Att_Diffuse_model(nn.Module):
         #     self.item_embeddings.weight[args.item_num - 1].normal_(mean=0, std=0.1)  # <unk> POI 嵌入
         #     self.tile_embeddings.weight[tile_vocab_size - 1].normal_(mean=0, std=0.1)  # <unk> 瓦片嵌入
 
-    def diffu_pre(self, rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq):
+    def diffu_pre(self, rep, tag_emb, timestamps, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq):
         seq_rep_diffu, item_rep_out, weights, t, time_target, condition = self.diffu_poi(
-            rep, tag_emb, timestamps, user_embeds, quadkey_rep, mask_seq
+            rep, tag_emb, timestamps, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq
         )
         return seq_rep_diffu, item_rep_out, weights, t, time_target, condition
 
@@ -467,7 +467,7 @@ class Att_Diffuse_model(nn.Module):
                 tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq_tile
             )
             poi_rep_diffu, poi_rep_item, poi_weights, poi_t, poi_time_target, condition = self.diffu_pre(
-                poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, mask_seq
+                poi_embeds, labels_emb, timestamps, user_embeds, quadkey_embeds, tile_rep_diffu, mask_seq
             )
             return condition, (tile_rep_diffu, poi_rep_diffu), (None, poi_weights), (None, poi_t), None, None, (
                 None, poi_time_target)
