@@ -253,9 +253,9 @@ class Att_Diffuse_model(nn.Module):
         )
         return seq_rep_diffu, item_rep_out, weights, t, time_target, condition
 
-    def reverse(self, rep, noise_x_t, timestamps, user_embeds, quadkey_rep, mask_seq):
+    def reverse(self, rep, noise_x_t, timestamps, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq):
         reverse_pre, time_target = self.diffu_poi.reverse_p_sample(
-            rep, noise_x_t, timestamps, user_embeds, quadkey_rep, mask_seq
+            rep, noise_x_t, timestamps, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq
         )
         return reverse_pre, time_target
 
@@ -480,7 +480,7 @@ class Att_Diffuse_model(nn.Module):
                 tile_embeds, timestamps, user_embeds, quadkey_embeds, mask_seq_tile
             )
             poi_rep_diffu, poi_time_target = self.reverse(
-                poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, mask_seq
+                poi_embeds, noise_x_t_poi, timestamps, user_embeds, quadkey_embeds, tile_rep_diffu, mask_seq
             )
 
             # # 瓦片排序：生成Tile Ranking List

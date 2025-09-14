@@ -396,6 +396,36 @@ class Transformer_rep(nn.Module):
         return hidden
 
 
+class CrossAttention(nn.Module):
+    """
+    Cross-attention:
+      - Query = sequence [B, L, D]
+      - Key/Value = context vector [B, D]  (length=1)
+    """
+    def __init__(self, D: int = 128, nhead: int = 4, dropout: float = 0.1):
+        super().__init__()
+        self.cross_attn = nn.MultiheadAttention(embed_dim=D, num_heads=nhead,
+                                                batch_first=True, dropout=dropout)
+
+    def forward(self,
+                x: torch.Tensor,             # [B, L, D]
+                c: torch.Tensor,             # [B, D]
+                key_padding_mask = None,
+                need_weights: bool = False
+                ):
+        # 把 context 变成长度为 1 的 Key/Value: [B, 1, D]
+        kv = c.unsqueeze(1)
+
+        # Cross Attention: Query = x, Key/Value = kv
+        out, attn_w = self.cross_attn(query=x, key=kv, value=kv,
+                                      key_padding_mask=key_padding_mask,
+                                      need_weights=need_weights,
+                                      average_attn_weights=False)
+        # out: [B, L, D]
+        # attn_w: [B, L, 1]  if need_weights=True
+        return out
+
+
 class tile_pre(nn.Module):
     def __init__(self, args, target_type="tile"):
         super(tile_pre, self).__init__()
@@ -484,6 +514,7 @@ class Diffu_xstart(nn.Module):
         self.mmlp_model = nn.Sequential(nn.Linear(self.hidden_size*3, self.hidden_size*6), nn.ReLU(), nn.Linear(self.hidden_size*6, self.hidden_size))
 
         self.att = Transformer_rep(args)
+        self.catt = CrossAttention()
         self.time2vec = Time2Vec('sin', 128, int(hidden_size))
         self.time2vec_day = Time2Vec('sin', 128, int(hidden_size))
 
@@ -525,9 +556,10 @@ class Diffu_xstart(nn.Module):
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
         rep_add_uid = torch.cat((rep, user_embeds), dim=2)
         rep = self.fc_item_uid_out(rep_add_uid)
-        tile_rep_diffu_exp = tile_rep_diffu.unsqueeze(1).expand(-1, 50, -1)
-        rep = torch.cat([rep, tile_rep_diffu_exp], dim=-1)
-        rep = self.fc(rep)
+        # tile_rep_diffu_exp = tile_rep_diffu.unsqueeze(1).expand(-1, 50, -1)
+        # rep = torch.cat([rep, tile_rep_diffu_exp], dim=-1)
+        # rep = self.fc(rep)
+        rep = self.catt(rep, tile_rep_diffu)
 
         # rep_diffu = self.att(rep + time_emb_all, mask_seq)
         rep_diffu = self.att(rep + time_emb_all, mask_seq)
@@ -668,12 +700,12 @@ class DiffuRec(nn.Module):
         assert (posterior_mean.shape[0] == x_start.shape[0])
         return posterior_mean
 
-    def p_mean_variance(self, rep_item, x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq):
+    def p_mean_variance(self, rep_item, x_t, t, TimeStamp, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq):
         # 有一个诡异的报错？这里加一个无用的参数
         item_tag = None
         # 计算在给定当前时间步 t 的带噪声输入 x_t 的情况下，下一步（即时间步 t-1）的均值和对数方差。
         model_output, rep_diffu, item_tag, time_target, condition = self.xstart_model(rep_item, x_t, self._scale_timesteps(t),
-                                                                           TimeStamp, user_embeds, quadkey_rep, mask_seq, item_tag)
+                                                                           TimeStamp, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq, item_tag)
 
         x_0 = model_output  ##output predict
         # x_0 = self._predict_xstart_from_eps(x_t, t, model_output)  ## eps predict
@@ -685,23 +717,23 @@ class DiffuRec(nn.Module):
                                                     t=t)  ## x_start: candidante item embedding, x_t: inputseq_embedding + outseq_noise, output x_(t-1) distribution
         return model_mean, model_log_variance, time_target
 
-    def p_sample(self, item_rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq):
+    def p_sample(self, item_rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq):
         # 给定当前时间步的噪声数据 x_t，生成去噪后的数据 x_(t-1)。通过采样，逐步将噪声数据恢复到原始数据。
-        model_mean, model_log_variance, time_target = self.p_mean_variance(item_rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq)
+        model_mean, model_log_variance, time_target = self.p_mean_variance(item_rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq)
         noise = th.randn_like(noise_x_t)
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(noise_x_t.shape) - 1))))  # no noise when t == 0
         sample_xt = model_mean + nonzero_mask * th.exp(
             0.5 * model_log_variance) * noise  ## sample x_{t-1} from the \mu(x_{t-1}) distribution based on the reparameter trick
         return sample_xt, time_target
 
-    def reverse_p_sample(self, rep, noise_x_t, TimeStamp, user_embeds, quadkey_rep, mask_seq):  # 通过迭代从时间步 T 到 0，逐步去噪，最终得到没有噪声的原始数据。
+    def reverse_p_sample(self, rep, noise_x_t, TimeStamp, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq):  # 通过迭代从时间步 T 到 0，逐步去噪，最终得到没有噪声的原始数据。
         device = next(self.xstart_model.parameters()).device
         indices = list(range(self.num_timesteps))[::-1]
 
         for i in indices:  # from T to 0, reversion iteration
             t = th.tensor([i] * rep.shape[0], device=device)
             with th.no_grad():
-                noise_x_t, time_target = self.p_sample(rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq)
+                noise_x_t, time_target = self.p_sample(rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq)
         return noise_x_t, time_target
 
     def forward(self, rep, item_tag, TimeStamp, user_embeds, quadkey_rep, tile_rep_diffu, mask_seq):
