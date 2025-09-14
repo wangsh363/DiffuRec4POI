@@ -366,11 +366,13 @@ class Att_Diffuse_model(nn.Module):
         poi_logits = torch.matmul(rep_poi, self.item_embeddings.weight.t())    # [B, P]
 
         # 2. softmax with temperature
-        tile_temp = torch.exp(self.tile_temp_log)  # 确保 temp > 0
-        poi_temp = torch.exp(self.poi_temp_log)
+        # tile_temp = torch.exp(self.tile_temp_log)  # 确保 temp > 0
+        # poi_temp = torch.exp(self.poi_temp_log)
+        tile_temp = 7
+        poi_temp = 4
         tile_probs = torch.softmax(tile_logits / tile_temp, dim=1)             # [B, T]
         poi_probs = torch.softmax(poi_logits / poi_temp, dim=1)                # [B, P]
-        print("tile_temp:", tile_temp.item(), "poi_temp:", poi_temp.item())
+        # print("tile_temp:", tile_temp.item(), "poi_temp:", poi_temp.item())
         # tile_probs = tile_probs.detach()
 
         # 3. gather tile_probs for each POI
