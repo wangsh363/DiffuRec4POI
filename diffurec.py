@@ -500,7 +500,7 @@ class Diffu_xstart(nn.Module):
             embedding = th.cat([embedding, th.zeros_like(embedding[:, :1])], dim=-1)
         return embedding
 
-    def forward(self, rep, x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq, item_tag):
+    def forward(self, rep, x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq, item_tag, noise_flag=True):
         emb_t = self.time_embed(self.timestep_embedding(t, self.hidden_size))
         lambda_uncertainty = th.normal(mean=th.full(rep.shape, self.lambda_uncertainty),
                                        std=th.full(rep.shape, self.lambda_uncertainty)).to(x_t.device)
@@ -519,7 +519,10 @@ class Diffu_xstart(nn.Module):
 
         delta = torch.zeros_like(rep)
         delta[:, -1, :] = lambda_uncertainty[:, -1, :] * x_t
-        rep = rep + delta
+        if noise_flag:
+            rep = rep + delta
+        else:
+            mask_seq[:, -1] = 0
 
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
         rep_add_uid = torch.cat((rep, user_embeds), dim=2)
@@ -700,7 +703,7 @@ class DiffuRec(nn.Module):
                 noise_x_t, time_target = self.p_sample(rep, noise_x_t, t, TimeStamp, user_embeds, quadkey_rep, mask_seq)
         return noise_x_t, time_target
 
-    def forward(self, rep, item_tag, TimeStamp, user_embeds, quadkey_rep, mask_seq):
+    def forward(self, rep, item_tag, TimeStamp, user_embeds, quadkey_rep, mask_seq, noise_flag=True):
         noise = th.randn_like(item_tag)  # 和初始物品嵌入形状一致的随机噪声
         # 使用 schedule_sampler 采样时间步 t 和对应的权重 weights。
         t, weights = self.schedule_sampler.sample(rep.shape[0],
@@ -714,7 +717,7 @@ class DiffuRec(nn.Module):
 
         # 调用 xstart_model，预测目标表示 x_0 和扩散后的物品表示 item_rep_out
         x_0, item_rep_out, item_tag, time_target, condition = self.xstart_model(rep, x_t, self._scale_timesteps(t), TimeStamp, user_embeds, quadkey_rep,
-                                                                     mask_seq, item_tag)  ##output predict
+                                                                     mask_seq, item_tag, noise_flag)  ##output predict
 
         # xstart_model 是一个神经网络模块，负责从扩散后的表示 x_t 中恢复目标表示 x_0。
         # item_rep 是历史交互序列（不包括目标序列）
