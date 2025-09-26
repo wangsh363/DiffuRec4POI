@@ -172,7 +172,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             # loss_diffu_tile = model_joint.loss_arcface(tile_rep_diffu, tile_labels, target_type="tile")
             # loss_diffu_tile = model_joint.loss_diffu_ce(tile_rep_diffu, tile_labels)
             # loss_diffu_poi = model_joint.loss_diffu_ce(poi_rep_diffu, labels)
-            loss_diffu_tile, loss_diffu_poi, _, _, _ = model_joint.loss_two_stage_prob(tile_rep_diffu, poi_rep_diffu, tile_labels, labels)
+            loss_diffu_tile, loss_diffu_poi, _, _, _, _ = model_joint.loss_two_stage_prob(tile_rep_diffu, poi_rep_diffu, tile_labels, labels)
             # loss_all = loss_diffu_tile + loss_diffu_poi
             loss_all = loss_diffu_tile + loss_diffu_poi
             loss_all.backward()
@@ -205,7 +205,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                     # tile_labels = tile_labels[valid_mask_tile]
 
                     # scores_poi = model_joint.diffu_rep_pre(poi_rep)
-                    _, _, scores_tile, scores_poi, final_scores_poi = model_joint.loss_two_stage_prob(tile_rep, poi_rep, tile_labels, labels)
+                    _, _, _, scores_tile, scores_poi, final_scores_poi = model_joint.loss_two_stage_prob(tile_rep, poi_rep, tile_labels, labels)
                     metrics_poi = hrs_and_ndcgs_k(scores_poi, labels, metric_ks)
                     for k, v in metrics_poi.items():
                         metrics_dict_poi[k].append(v)
@@ -291,7 +291,7 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             #     print(f"警告: 测试集中包含 {valid_mask.size(0) - valid_mask.sum().item()} 个 <unk> 标签")
             # top_k_pois = top_k_pois[valid_mask]
             # labels = labels[valid_mask]
-            _, _, scores_tile, scores_poi, final_scores_poi = best_model.loss_two_stage_prob(tile_rep, poi_rep, tile_labels, labels)
+            _, _, _, scores_tile, scores_poi, final_scores_poi = best_model.loss_two_stage_prob(tile_rep, poi_rep, tile_labels, labels)
             metrics = hrs_and_ndcgs_k(final_scores_poi, labels, metric_ks)
             for k, v in metrics.items():
                 test_metrics_dict[k].append(v)

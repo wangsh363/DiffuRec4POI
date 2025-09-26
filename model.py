@@ -373,7 +373,7 @@ class Att_Diffuse_model(nn.Module):
         tile_probs = torch.softmax(tile_logits / tile_temp, dim=1)             # [B, T]
         poi_probs = torch.softmax(poi_logits / poi_temp, dim=1)                # [B, P]
         # print("tile_temp:", tile_temp.item(), "poi_temp:", poi_temp.item())
-        # tile_probs = tile_probs.detach()
+        tile_probs = tile_probs.detach()
 
         # 3. gather tile_probs for each POI
         poi_tile_indices = self.poi_to_tile_tensor.to(rep_poi.device).unsqueeze(0).expand(rep_poi.size(0), -1)
@@ -384,6 +384,7 @@ class Att_Diffuse_model(nn.Module):
         final_probs = final_probs / final_probs.sum(dim=1, keepdim=True)      # optional normalize
 
         # 5. compute POI-level loss (joint)
+        poi_loss = self.loss_ce(poi_logits, poi_labels.squeeze(-1))
         target = poi_labels.squeeze(-1).unsqueeze(1)                           # [B, 1]
         gathered_probs = torch.gather(final_probs, dim=1, index=target)       # [B, 1]
         joint_loss = -torch.log(gathered_probs + 1e-12).mean()
@@ -391,7 +392,7 @@ class Att_Diffuse_model(nn.Module):
         # 6. compute tile-level loss
         tile_loss = self.loss_ce(tile_logits, tile_labels.squeeze(-1))        # [B]
 
-        return tile_loss, joint_loss, tile_probs, poi_probs, final_probs
+        return tile_loss, poi_loss, joint_loss, tile_probs, poi_probs, final_probs
 
 
     # sequence是输入的序列，最后一个数据是[0, 时间]，前面的是历史交互元组(物品，时间)。tag是label标签。

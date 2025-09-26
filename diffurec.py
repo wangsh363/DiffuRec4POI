@@ -556,10 +556,11 @@ class Diffu_xstart(nn.Module):
         time_emb_all = 0.7 * time_emb_norm + 0.3 * time_emb_day
         rep_add_uid = torch.cat((rep, user_embeds), dim=2)
         rep = self.fc_item_uid_out(rep_add_uid)
+
         # tile_rep_diffu_exp = tile_rep_diffu.unsqueeze(1).expand(-1, 50, -1)
         # rep = torch.cat([rep, tile_rep_diffu_exp], dim=-1)
         # rep = self.fc(rep)
-        rep = self.catt(rep, tile_rep_diffu)
+        # rep = self.catt(rep, tile_rep_diffu)
 
         # rep_diffu = self.att(rep + time_emb_all, mask_seq)
         rep_diffu = self.att(rep + time_emb_all, mask_seq)
