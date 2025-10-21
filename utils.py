@@ -299,6 +299,7 @@ def build_data_vocabs(data_dict, cache_dir='./cache', dataset_name='gowalla'):
 class TrainDataset(data_utils.Dataset):
     def __init__(self, id2seq, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
         self.id2seq = id2seq
+        self.users = sorted(self.id2seq.keys())
         self.max_len = max_len
         self.quadkey_vocab = quadkey_vocab
         self.tiles = tiles
@@ -374,10 +375,12 @@ class TrainDataset(data_utils.Dataset):
     #     return precomputed
 
     def __len__(self):
-        return len(self.id2seq)
+        return len(self.users)
 
     def __getitem__(self, index):
-        seq = self._getseq(index)
+        # seq = self._getseq(index)
+        user = self.users[index]
+        seq = self.id2seq[user]
         # raw_label = seq[-1][0]
         # label = self.smap_reverse.get(raw_label, -1)
         # labels = [label]
@@ -437,22 +440,22 @@ class Data_Train:
         self.poi_to_tile = poi_to_tile
         self.tile_coords_list = tile_coords_list
         # self.smap_reverse = smap_reverse
-        self.split_onebyone()
+        # self.split_onebyone()
         self.dataset_name = args.dataset
         self.cache_dir = './cache'
 
-    def split_onebyone(self):
-        self.id_seq = {}
-        self.id_seq_user = {}
-        idx = 0
-        for user_temp, seq_temp in self.u2seq.items():
-            for star in range(len(seq_temp)-1):
-                self.id_seq[idx] = seq_temp[:star+2]
-                self.id_seq_user[idx] = user_temp
-                idx += 1
+    # def split_onebyone(self):
+    #     self.id_seq = {}
+    #     self.id_seq_user = {}
+    #     idx = 0
+    #     for user_temp, seq_temp in self.u2seq.items():
+    #         for star in range(len(seq_temp)-1):
+    #             self.id_seq[idx] = seq_temp[:star+2]
+    #             self.id_seq_user[idx] = user_temp
+    #             idx += 1
 
     def get_pytorch_dataloaders(self):
-        dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = TrainDataset(self.u2seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True, collate_fn=self.collate_fn)
 
     def collate_fn(self, batch):
@@ -469,10 +472,10 @@ class Data_Train:
                 )
 
 class ValDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, u2seq, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
         self.u2seq = u2seq
         self.users = sorted(self.u2seq.keys())
-        self.u2answer = u2answer
+        # self.u2answer = u2answer
         self.max_len = max_len
         self.quadkey_vocab = quadkey_vocab
         self.tiles = tiles
@@ -532,25 +535,26 @@ class ValDataset(data_utils.Dataset):
         # raw_answer = self.u2answer[user][0][0]
         # answer = self.smap_reverse.get(raw_answer, -1)
         # answer = [answer]
-        answer = [self.u2answer[user][0][0]]
+        answer = [seq[-1][0]]
         # unk_tile_id = self.tile_vocab_size - 1
         tile_label = self.poi_to_tile.get(answer[0])
         tile_labels = [tile_label]
-        last_time = self.u2answer[user][0][1]
-        last_uid = self.u2answer[user][0][2]
-        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
-        seq = seq[-self.max_len:]
-        padding_len = self.max_len - len(seq)
+        last_time = seq[-1][1]
+        last_uid = seq[-1][2]
+        tokens = seq[:-1]
+        tokens = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
+        tokens = tokens[-self.max_len:]
+        padding_len = self.max_len - len(tokens)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
-            seq = seq[1:]
-        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
-        items = [x[0] for x in seq]
-        timestamps = [x[1] for x in seq]
-        uids = [x[2] for x in seq]
+            tokens = tokens[1:]
+        tokens = [[0, 0, 0, 0.0, 0.0]] * padding_len + tokens + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
+        items = [x[0] for x in tokens]
+        timestamps = [x[1] for x in tokens]
+        uids = [x[2] for x in tokens]
         # quadkeys, tile_ids, coords = self.precomputed_data[index]
-        coords = [[x[3], x[4]] for x in seq]
+        coords = [[x[3], x[4]] for x in tokens]
         tile_ids = [self.poi_to_tile.get(key) for key in items]
         tile_coords = [self.tile_coords_list[tile_id - 1] for tile_id in tile_ids]
         # unk_index = self.quadkey_vocab['<unk>']
@@ -571,10 +575,10 @@ class ValDataset(data_utils.Dataset):
 
 
 class Data_Val:
-    def __init__(self, data_train, data_val, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list):
+    def __init__(self, data_val, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list):
         self.batch_size = args.batch_size
-        self.u2seq = data_train
-        self.u2answer = data_val
+        self.u2seq = data_val
+        # self.u2answer = data_val
         self.max_len = args.max_len
         self.quadkey_vocab = quadkey_vocab
         self.tiles = tiles
@@ -587,7 +591,7 @@ class Data_Val:
         self.cache_dir = './cache'
 
     def get_pytorch_dataloaders(self):
-        dataset = ValDataset(self.u2seq, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = ValDataset(self.u2seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
 
@@ -606,11 +610,11 @@ class Data_Val:
 
 
 class TestDataset(data_utils.Dataset):
-    def __init__(self, u2seq, u2_seq_add, u2answer, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
+    def __init__(self, u2seq, max_len, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list, cache_dir='./cache', dataset_name='gowalla'):
         self.u2seq = u2seq
-        self.u2seq_add = u2_seq_add
+        # self.u2seq_add = u2_seq_add
         self.users = sorted(self.u2seq.keys())
-        self.u2answer = u2answer
+        # self.u2answer = u2answer
         self.max_len = max_len
         self.quadkey_vocab = quadkey_vocab
         self.tiles = tiles
@@ -667,29 +671,30 @@ class TestDataset(data_utils.Dataset):
     def __getitem__(self, index):
         user = self.users[index]
         # seq = self.u2seq[user]
-        seq = self.u2seq[user] + self.u2seq_add[user]
+        seq = self.u2seq[user]
         # raw_answer = self.u2answer[user][0][0]
         # answer = self.smap_reverse.get(raw_answer, -1)
         # answer = [answer]
-        answer = [self.u2answer[user][0][0]]
+        answer = [seq[-1][0]]
         # unk_tile_id = self.tile_vocab_size - 1
         tile_label = self.poi_to_tile.get(answer[0])
         tile_labels = [tile_label]
-        last_time = self.u2answer[user][0][1]
-        last_uid = self.u2answer[user][0][2]
-        seq = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in seq]
-        seq = seq[-self.max_len:]
-        padding_len = self.max_len - len(seq)
+        last_time = seq[-1][1]
+        last_uid = seq[-1][2]
+        tokens = seq[:-1]
+        tokens = [[item[0], int(item[1].timestamp()), item[2], item[3], item[4]] for item in tokens]
+        tokens = tokens[-self.max_len:]
+        padding_len = self.max_len - len(tokens)
         if padding_len > 0:
             padding_len = padding_len - 1
         else:
-            seq = seq[1:]
-        seq = [[0, 0, 0, 0.0, 0.0]] * padding_len + seq + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
-        items = [x[0] for x in seq]
-        timestamps = [x[1] for x in seq]
-        uids = [x[2] for x in seq]
+            tokens = tokens[1:]
+        tokens = [[0, 0, 0, 0.0, 0.0]] * padding_len + tokens + [[0, int(last_time.timestamp()), last_uid, 0.0, 0.0]]
+        items = [x[0] for x in tokens]
+        timestamps = [x[1] for x in tokens]
+        uids = [x[2] for x in tokens]
         # quadkeys, tile_ids, coords = self.precomputed_data[index]
-        coords = [[x[3], x[4]] for x in seq]
+        coords = [[x[3], x[4]] for x in tokens]
         tile_ids = [self.poi_to_tile.get(key) for key in items]
         tile_coords = [self.tile_coords_list[tile_id - 1] for tile_id in tile_ids]
         # unk_index = self.quadkey_vocab['<unk>']
@@ -711,11 +716,12 @@ class TestDataset(data_utils.Dataset):
 
 
 class Data_Test:
-    def __init__(self, data_train, data_val, data_test, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list):
+    def __init__(self, data_test, args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list):
         self.batch_size = args.batch_size
-        self.u2seq = data_train
-        self.u2seq_add = data_val
-        self.u2answer = data_test
+        self.u2seq = data_test
+        # self.u2seq = data_train
+        # self.u2seq_add = data_val
+        # self.u2answer = data_test
         self.max_len = args.max_len
         self.quadkey_vocab = quadkey_vocab
         self.tiles = tiles
@@ -728,7 +734,7 @@ class Data_Test:
         self.cache_dir = './cache'
 
     def get_pytorch_dataloaders(self):
-        dataset = TestDataset(self.u2seq, self.u2seq_add, self.u2answer, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = TestDataset(self.u2seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         dataloader = data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, collate_fn=self.collate_fn)
         return dataloader
 

@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 # os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
@@ -197,13 +197,13 @@ def main(args):
     # 将时间字符串转换为 datetime 对象
     # 获取经纬度
     for key, value in data_raw['train'].items():
-        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%a %b %d %H:%M:%S +0000 %Y'), uid, latitude, longitude) for
                                   poi, time_str, uid, latitude, longitude in value]
     for key, value in data_raw['val'].items():
-        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%a %b %d %H:%M:%S +0000 %Y'), uid, latitude, longitude) for
                                 poi, time_str, uid, latitude, longitude in value]
     for key, value in data_raw['test'].items():
-        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%a %b %d %H:%M:%S +0000 %Y'), uid, latitude, longitude) for
                                  poi, time_str, uid, latitude, longitude in value]
 
     # 使用缓存构建词汇表
@@ -216,9 +216,9 @@ def main(args):
 
     # 传入词汇表和映射
     tra_data = Data_Train(data_raw['train'], args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
-    val_data = Data_Val(data_raw['train'], data_raw['val'], args, quadkey_vocab, tiles, tile_vocab_size,
+    val_data = Data_Val(data_raw['val'], args, quadkey_vocab, tiles, tile_vocab_size,
                         tile_to_poi, poi_to_tile, tile_coords_list)
-    test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args, quadkey_vocab, tiles,
+    test_data = Data_Test(data_raw['test'], args, quadkey_vocab, tiles,
                           tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
     tra_data_loader = tra_data.get_pytorch_dataloaders()
     val_data_loader = val_data.get_pytorch_dataloaders()
