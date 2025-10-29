@@ -375,12 +375,12 @@ class TrainDataset(data_utils.Dataset):
     #     return precomputed
 
     def __len__(self):
-        return len(self.users)
+        return len(self.id2seq)
 
     def __getitem__(self, index):
-        # seq = self._getseq(index)
-        user = self.users[index]
-        seq = self.id2seq[user]
+        seq = self._getseq(index)
+        # user = self.users[index]
+        # seq = self.id2seq[user]
         # raw_label = seq[-1][0]
         # label = self.smap_reverse.get(raw_label, -1)
         # labels = [label]
@@ -440,22 +440,22 @@ class Data_Train:
         self.poi_to_tile = poi_to_tile
         self.tile_coords_list = tile_coords_list
         # self.smap_reverse = smap_reverse
-        # self.split_onebyone()
+        self.split_onebyone()
         self.dataset_name = args.dataset
         self.cache_dir = './cache'
 
-    # def split_onebyone(self):
-    #     self.id_seq = {}
-    #     self.id_seq_user = {}
-    #     idx = 0
-    #     for user_temp, seq_temp in self.u2seq.items():
-    #         for star in range(len(seq_temp)-1):
-    #             self.id_seq[idx] = seq_temp[:star+2]
-    #             self.id_seq_user[idx] = user_temp
-    #             idx += 1
+    def split_onebyone(self):
+        self.id_seq = {}
+        self.id_seq_user = {}
+        idx = 0
+        for user_temp, seq_temp in self.u2seq.items():
+            for star in range(len(seq_temp)-1):
+                self.id_seq[idx] = seq_temp[:star+2]
+                self.id_seq_user[idx] = user_temp
+                idx += 1
 
     def get_pytorch_dataloaders(self):
-        dataset = TrainDataset(self.u2seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
+        dataset = TrainDataset(self.id_seq, self.max_len, self.quadkey_vocab, self.tiles, self.tile_vocab_size, self.tile_to_poi, self.poi_to_tile, self.tile_coords_list, cache_dir=self.cache_dir, dataset_name=self.dataset_name)
         return data_utils.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True, collate_fn=self.collate_fn)
 
     def collate_fn(self, batch):
