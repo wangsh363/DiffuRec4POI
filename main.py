@@ -7,24 +7,25 @@ import numpy as np
 import logging
 import time
 import pickle
-from utils import Data_Train, Data_Val, Data_Test, Data_CHLS
+from utils import Data_Train, Data_Val, Data_Test, Data_CHLS, build_quadkey_vocab, build_data_vocabs
 from model import create_model_diffu, Att_Diffuse_model
 from trainer import model_train, LSHT_inference
 from collections import Counter
 from datetime import datetime
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', default='amazon_beauty', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
+parser.add_argument('--dataset', default='nyc', help='Dataset name: toys, amazon_beauty, steam, ml-1m')
 parser.add_argument('--log_file', default='log/', help='log dir path')
-parser.add_argument('--random_seed', type=int, default=1997, help='Random seed')  
+parser.add_argument('--random_seed', type=int, default=2025, help='Random seed')  
 parser.add_argument('--max_len', type=int, default=50, help='The max length of sequence')
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 parser.add_argument('--num_gpu', type=int, default=1, help='Number of GPU')
-parser.add_argument('--batch_size', type=int, default=512, help='Batch Size')  
+parser.add_argument('--batch_size', type=int, default=512, help='Batch Size')  # 512
 parser.add_argument("--hidden_size", default=128, type=int, help="hidden size of model")
 parser.add_argument('--dropout', type=float, default=0.1, help='Dropout of representation')
 parser.add_argument('--emb_dropout', type=float, default=0.3, help='Dropout of item embedding')
@@ -50,6 +51,14 @@ parser.add_argument('--description', type=str, default='Diffu_norm_score', help=
 parser.add_argument('--long_head', default=False, help='Long and short sequence, head and long-tail items')
 parser.add_argument('--diversity_measure', default=False, help='Measure the diversity of recommendation results')
 parser.add_argument('--epoch_time_avg', default=False, help='Calculate the average time of one epoch training')
+
+# 地理编码及自注意力所需
+parser.add_argument('--quadkey_num', type=int, default=10000, help='Number of unique Quadkeys')
+parser.add_argument('--lod', type=int, default=17, help='Level of Detail for Quadkey')  # 四键的细节层次
+parser.add_argument('--nhead', type=int, default=1, help='Number of attention heads')
+parser.add_argument('--num_layers', type=int, default=2, help='Number of Transformer layers')
+parser.add_argument('--top_k_tiles', type=int, default=20, help='Top K tiles for inference') # 选取K个瓦片
+parser.add_argument('--top_k_pois', type=int, default=20, help='Top K pois for inference') # 选取K个POI,用于最终计算结果
 args = parser.parse_args()
 
 print(args)
@@ -77,6 +86,13 @@ def fix_random_seed_as(random_seed):
 
 def item_num_create(args, item_num):
     args.item_num = item_num
+    print(f"Item number set to: {args.item_num}")
+    return args
+
+
+def user_num_create(args, user_num):
+    args.user_num = user_num
+    print(f"User number set to: {args.user_num}")
     return args
 
 
@@ -138,7 +154,6 @@ def cold_hot_long_short(data_raw, dataset_name):
             len_seq_dict['long'].append(temp_seq)
     return cold_hot_dict, len_seq_dict, split_num, [len_short, len_midshort, len_midlong, len_long], len_list, list(item_num_count.values())
 
-
 def main(args):    
     fix_random_seed_as(args.random_seed)
     path_data = './datasets/data/' + args.dataset + '/dataset.pkl'
@@ -146,31 +161,72 @@ def main(args):
         data_raw = pickle.load(f)
     
     # cold_hot_long_short(data_raw, args.dataset)
-    
+
+    # smap = data_raw.get('smap', {})
+    # # 创建反向映射
+    # smap_reverse = {v: k for k, v in smap.items()}
+    # print(f"smap 键范围: [{min(smap.keys())}, {max(smap.keys())}], 值示例: {list(smap.values())[:5]}")
+
+    # 添加 <unk> 索引
+    # max_poi_id = max(smap.keys()) if smap else 0
+    # unk_poi_id = max_poi_id + 1
+    # smap_reverse[-1] = unk_poi_id  # 用 -1 表示未知POI
+    # smap[unk_poi_id] = -1  # 反向映射
+    # print(f"添加 <unk> POI ID: {unk_poi_id}")
+
+    # # num数量加了一个unk，来映射未知POI
+    # args = item_num_create(args, unk_poi_id + 1)
+    # data_raw['smap_reverse'] = smap_reverse
+
+    # 计算用户数量
+    # user_ids = set()
+    # for split in ['train', 'val', 'test']:
+    #     for user_id in data_raw[split].keys():
+    #         user_ids.add(user_id)
+    # args.user_num = len(user_ids) + 1  # 加1以包含可能的<unk>用户ID
+    # print(f"用户数量: {args.user_num}")
+
     # args = item_num_create(args, len(data_raw['smap']))  # 根据smap的长度确定最大编号
-    args = item_num_create(args, max(data_raw['smap'].values()))  # 换成根据smap最大
-    
+    # args = item_num_create(args, max(data_raw['smap'].values()))  # 换成根据smap最大
+    # 为什么是根据值的最大来设置item数量？
+
+    args = item_num_create(args, data_raw['num_poi'])
+    args = user_num_create(args, data_raw['num_user'])
+
     # 转换一下时间格式，字符串-->时间
     # 将时间字符串转换为 datetime 对象
+    # 获取经纬度
     for key, value in data_raw['train'].items():
-        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['train'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+                                  poi, time_str, uid, latitude, longitude in value]
     for key, value in data_raw['val'].items():
-        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
+        data_raw['val'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+                                poi, time_str, uid, latitude, longitude in value]
     for key, value in data_raw['test'].items():
-        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')) for poi, time_str in value]
-        
-    tra_data = Data_Train(data_raw['train'], args)  # data_raw['train']是一个字典。
-    # 结构是(序号：交互序列，每个序列值是一个元组(物品，原始格式的时间))。  # 初始化了一个这样的数据对象
-    val_data = Data_Val(data_raw['train'], data_raw['val'], args)
-    test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args)
+        data_raw['test'][key] = [(poi, datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'), uid, latitude, longitude) for
+                                 poi, time_str, uid, latitude, longitude in value]
+
+    # 使用缓存构建词汇表
+    quadkey_vocab, tile_vocab, tiles, tile_to_poi, poi_to_tile, tile_coords_list = build_data_vocabs(
+        data_raw, cache_dir='./cache', dataset_name=args.dataset
+    )
+
+    quadkey_vocab_size = len(quadkey_vocab)
+    tile_vocab_size = len(tile_vocab)
+
+    # 传入词汇表和映射
+    tra_data = Data_Train(data_raw['train'], args, quadkey_vocab, tiles, tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
+    val_data = Data_Val(data_raw['train'], data_raw['val'], args, quadkey_vocab, tiles, tile_vocab_size,
+                        tile_to_poi, poi_to_tile, tile_coords_list)
+    test_data = Data_Test(data_raw['train'], data_raw['val'], data_raw['test'], args, quadkey_vocab, tiles,
+                          tile_vocab_size, tile_to_poi, poi_to_tile, tile_coords_list)
     tra_data_loader = tra_data.get_pytorch_dataloaders()
     val_data_loader = val_data.get_pytorch_dataloaders()
     test_data_loader = test_data.get_pytorch_dataloaders()
-    diffu_rec = create_model_diffu(args)
-    rec_diffu_joint_model = Att_Diffuse_model(diffu_rec, args)
-    
-    best_model, test_results = model_train(tra_data_loader, val_data_loader, test_data_loader, rec_diffu_joint_model, args, logger)
 
+    rec_diffu_joint_model = create_model_diffu(args, quadkey_vocab_size, tile_vocab_size, tile_to_poi, poi_to_tile)
+
+    best_model, test_results = model_train(tra_data_loader, val_data_loader, test_data_loader, rec_diffu_joint_model, args, logger)
 
     if args.long_head:
         cold_hot_dict, len_seq_dict, split_hotcold, split_length, list_len, list_num = cold_hot_long_short(data_raw, args.dataset)
